@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+.uv/
+*.egg-info/
+dist/
+build/
+
+# Data — gitignore all except small samples
+data/
+!data/samples/
+
+# Environment / secrets
+.env
+.env.*
+*.key
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
