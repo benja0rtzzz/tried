@@ -1,0 +1,14 @@
+{"origin": "tritonbench/custom_shape_attentions", "reason": "no baseline method"}
+{"origin": "tritonbench/decoding_attention", "reason": "requires cache_seqlens and KV-cache layout metadata"}
+{"origin": "tritonbench/flex_attention", "reason": "requires block mask / score modifier metadata"}
+{"origin": "tritonbench/gdn_fwd_h", "reason": "requires recurrent state tensors and chunk sizing"}
+{"origin": "tritonbench/gdpa", "reason": "requires jagged and padded data layout metadata"}
+{"origin": "tritonbench/int4_gemm", "reason": "no operator.py"}
+{"origin": "tritonbench/jagged_layer_norm", "reason": "requires seqlen and sparsity metadata"}
+{"origin": "tritonbench/jagged_mean", "reason": "requires B/M/seqlen/sparsity metadata"}
+{"origin": "tritonbench/jagged_softmax", "reason": "requires B/M/seqlen/sparsity metadata"}
+{"origin": "tritonbench/jagged_sum", "reason": "requires B/M/seqlen/sparsity metadata"}
+{"origin": "tritonbench/low_mem_dropout", "reason": "stochastic dropout cannot be represented as a deterministic tensor-only corpus row"}
+{"origin": "tritonbench/mamba2_chunk_scan", "reason": "requires multiple recurrent state tensors"}
+{"origin": "tritonbench/mamba2_chunk_state", "reason": "requires recurrent state tensors"}
+{"origin": "tritonbench/ragged_attention", "reason": "requires ragged sequence metadata"}

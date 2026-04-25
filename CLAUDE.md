@@ -51,7 +51,7 @@ tried/
 
 These files encode experimental invariants. Editing them mid-experiment invalidates comparisons between runs. They are set once, before data collection, in agreement with the full team.
 
-- `docs/schema.md` and `docs/schema.json` — dataset schema
+- `docs/schema.md`, `packages/shared/src/shared/schema/dataset_record.json`, and `packages/shared/src/shared/schema/eval_and_training.json` — dataset and corpus schemas
 - `docs/tolerance-policy.md` and `packages/shared/src/shared/verification/tolerance.py`
 - `eval/holdout/` — the evaluation set (never touch programmatically)
 
@@ -77,10 +77,11 @@ Week 1 of an 8-week project. Schema, tolerance policy module, held-out eval set 
 ## Docs knowledge base
 
 - @docs/architecture.md — two-machine data flow, FastAPI endpoint contract
-- @docs/schema.md — human-readable schema explanation (machine spec: @docs/schema.json)
+- @docs/schema.md — human-readable schema explanation (machine specs: `packages/shared/src/shared/schema/dataset_record.json` and `packages/shared/src/shared/schema/eval_and_training.json`)
 - @docs/benchmarking-protocol.md — verification steps, timing rules, hardware pinning
 - @docs/tolerance-policy.md — tolerance values and rationale
 - @docs/model-choices.md — generator/judge selection rationale, bakeoff results
 - @docs/dev-setup-macbook.md — MacBook environment setup (UV, Ollama, MLX)
 - @docs/dev-setup-lenovo.md — Lenovo environment setup (UV, CUDA, Triton, uvicorn)
 - @docs/decision-log.md — ADR-lite log of key decisions
+- @docs/corpus.md — corpus plan, train/eval split, extraction rules

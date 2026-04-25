@@ -22,7 +22,6 @@ The `tried-verification` package is **not** installed here — it's Lenovo-only 
 
 ```bash
 ollama pull qwen2.5-coder:14b
-ollama pull gemma4:27b   # MoE variant — confirm exact tag
 ```
 
 ## Azure OpenAI (judge)
