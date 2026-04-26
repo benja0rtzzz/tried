@@ -10,8 +10,7 @@
     "source",
     "attempts",
     "final_outcome",
-    "final_winning_attempt_n",
-    "tags"
+    "final_winning_attempt_n"
   ],
   "properties": {
     "example_id": {
@@ -31,12 +30,6 @@
       "type": ["integer", "null"],
       "minimum": 0,
       "description": "The attempt_n whose result is recorded in final_outcome. Null iff final_outcome is in {compile_failed, correctness_failed, all_attempts_failed}."
-    },
-    "tags": {
-      "type": "array",
-      "description": "Multi-label classification of the example. Closed vocabulary.",
-      "items": { "$ref": "#/$defs/tag" },
-      "uniqueItems": true
     }
   },
   "$defs": {
@@ -368,7 +361,7 @@
     },
     "tolerance_policy": {
       "type": "string",
-      "enum": ["default_fp32", "default_fp16", "reduction"],
+      "enum": ["default_fp32", "default_fp16", "reduction_fp16", "reduction_fp32"],
       "description": "Key into packages/shared/src/shared/verification/tolerance.py. Closed vocabulary; that module is the source of truth for atol/rtol values."
     }
   }
