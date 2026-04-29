@@ -10,7 +10,7 @@ UV workspace with three packages (`shared`, `orchestrator`, `verification`). Sch
 ---
 
 ## 2026-04-24 — Dataset schema v1 adopted
-Row = one PyTorch op, all attempts, final outcome. Key fields: `source` (immutable inputs), `attempts[]` (generate→compile→verify→judge cycles), `final_outcome`, `final_winning_attempt_n`, `tags`. Closed vocabularies for all categorical fields, enforced as Python Enums in `packages/shared/src/shared/enums.py`. Machine-readable spec: `docs/schema.json`.
+Row = one PyTorch op, all attempts, final outcome. Key fields: `source` (immutable inputs), `attempts[]` (generate→compile→verify→judge cycles), `final_outcome`, `final_winning_attempt_n`, `tags`. Closed vocabularies for all categorical fields, enforced as Python Enums. Machine-readable spec: `docs/schema.json`.
 
 ---
 
@@ -39,7 +39,7 @@ TritonBench ([paper](https://arxiv.org/abs/2502.14752)) is a research benchmark,
 ---
 
 ## 2026-04-24 — source_model renamed to origin
-`source_model` implied the op was extracted from a named model architecture (BERT, LLaMA, etc.), which was the original plan before model scraping was dropped. Since all ops now come from tritonbench, the field is renamed to `origin` and always holds a `"tritonbench/<op_name>"` string. Field is non-nullable — every corpus row has a known origin.
+`source_model` implied the op was extracted from a named model architecture (BERT, LLaMA, etc.). The field is renamed to `origin`. Field is non-nullable — every corpus row has a known origin. Format is `<source>/<name>` (see 2026-04-26 entry for the generalized convention).
 
 ---
 
@@ -48,9 +48,19 @@ Added `loss` (cross-entropy, KL-divergence, JSD, fused-linear-loss variants) and
 ---
 
 ## 2026-04-25 — Deterministic corpus IDs and curated training provenance allowed
-Corpus extraction now permits deterministic UUIDv5 `example_id` values derived from stable row contents. This keeps reruns joinable when the same PyTorch op is regenerated. Training provenance also now includes `curated/train/<name>` for hand-written standalone PyTorch patterns that fill underrepresented behavior buckets; these are training rows and are distinct from held-out `synthetic/fusion` eval rows.
+Corpus extraction now permits deterministic UUIDv5 `example_id` values derived from stable row contents. This keeps reruns joinable when the same PyTorch op is regenerated. Training provenance also now includes `curated/<name>` for hand-written standalone PyTorch patterns that fill underrepresented behavior buckets; these are training rows and are distinct from held-out `synthetic/fusion` eval rows.
 ---
 
 ## 2026-04-25 — Convolution promoted out of other
 Scraped ResNet rows previously classified plain `conv2d` and `conv2d -> batch_norm -> relu` patterns as `other`. The corpus schema now includes `convolution` as a first-class `op_category`, and the v1 scraper emits convolutional model patterns with that category. `other` remains a small fallback bucket but should not carry common trainable compute families.
+
+---
+
+## 2026-04-26 — Origin format generalized to `<source>/<name>`
+The restricted format list (`tritonbench/<op_name>`, `hf/<model_name>`, etc.) is replaced with the open-ended pattern `<source>/<name>`. Source can be any repo name (e.g. `flash-attention`, `mamba`, `torchao`), a model namespace (`hf`, `timm`), `curated`, or `synthetic`. This accommodates the v2 scraper batch without schema updates for each new source. All previously valid formats remain valid under the new pattern. `curated/train/<name>` shortened to `curated/<name>`.
+
+---
+
+## 2026-04-26 — op_category extended with `quantization`
+Added `quantization` to `op_category`. Covers affine quant/dequant, fake quant, qmap, NF4/codebook, FP8, and dynamic per-token quantization patterns sourced from TorchAO, vLLM, and xFormers. Without it, all quantization rows collapse into `other`, obscuring the dominant behavior from the v2 scraper batch. Additional proposed categories (`state_space_scan`, `scatter_gather_indexing`, `logits_sampling`, `cache_update`, `positional_encoding`) are under review pending v2 notebook validation and will be added with separate log entries if accepted.
 

@@ -52,7 +52,7 @@
         },
         "origin": {
           "type": "string",
-          "description": "Where the example was extracted from. Format: 'tritonbench/<op_name>', 'hf/<model_name>', 'timm/<model_name>', or 'synthetic/fusion'."
+          "description": "Provenance string. Format: '<source>/<name>'. Source is a repo name (e.g. 'flash-attention', 'mamba', 'torchao', 'tritonbench'), a model namespace ('hf', 'timm'), 'curated', or 'synthetic'. Examples: 'mamba/selective_scan_static', 'tritonbench/layer_norm', 'curated/softmax_fused', 'hf/bert-base-uncased', 'synthetic/fusion'."
         },
         "input_shapes": {
           "type": "array",
@@ -328,6 +328,7 @@
         "activation",
         "loss",
         "embedding",
+        "quantization",
         "other"
       ],
       "description": "Coarse op family. Closed vocabulary. Finalized after corpus extraction."
@@ -361,8 +362,19 @@
     },
     "tolerance_policy": {
       "type": "string",
-      "enum": ["default_fp32", "default_fp16", "reduction_fp16", "reduction_fp32"],
-      "description": "Key into packages/shared/src/shared/verification/tolerance.py. Closed vocabulary; that module is the source of truth for atol/rtol values."
+      "enum": [
+        "default_fp32",
+        "default_fp16",
+        "reduction_fp16",
+        "reduction_fp32",
+        "exact_integer",
+        "masked_logits",
+        "attention_softmax_fp16",
+        "recurrent_scan_fp16",
+        "low_precision_dequant",
+        "fp8_cast"
+      ],
+      "description": "Key into packages/shared/src/shared/verification/tolerance.py. Closed vocabulary; that module is the source of truth for atol/rtol values and comparison semantics."
     }
   }
 }

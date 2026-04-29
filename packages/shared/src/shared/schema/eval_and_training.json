@@ -29,7 +29,7 @@
     },
     "origin": {
       "type": "string",
-      "description": "Provenance string. One of: 'tritonbench/<op_name>', 'hf/<model_name>', 'timm/<model_name>', 'synthetic/fusion'."
+      "description": "Provenance string. Format: '<source>/<name>'. Source is a repo name (e.g. 'flash-attention', 'mamba', 'torchao', 'tritonbench'), a model namespace ('hf', 'timm'), 'curated', or 'synthetic'. Examples: 'mamba/selective_scan_static', 'tritonbench/layer_norm', 'curated/softmax_fused', 'hf/bert-base-uncased', 'synthetic/fusion'."
     },
     "op_category": { "$ref": "#/$defs/op_category" },
     "difficulty": {
@@ -91,6 +91,7 @@
         "activation",
         "loss",
         "embedding",
+        "quantization",
         "other"
       ],
       "description": "Coarse op family. Closed vocabulary. Finalized after corpus extraction - do not add values without a decision-log entry and team sign-off."
