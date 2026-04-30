@@ -64,3 +64,14 @@ The restricted format list (`tritonbench/<op_name>`, `hf/<model_name>`, etc.) is
 ## 2026-04-26 — op_category extended with `quantization`
 Added `quantization` to `op_category`. Covers affine quant/dequant, fake quant, qmap, NF4/codebook, FP8, and dynamic per-token quantization patterns sourced from TorchAO, vLLM, and xFormers. Without it, all quantization rows collapse into `other`, obscuring the dominant behavior from the v2 scraper batch. Additional proposed categories (`state_space_scan`, `scatter_gather_indexing`, `logits_sampling`, `cache_update`, `positional_encoding`) are under review pending v2 notebook validation and will be added with separate log entries if accepted.
 
+---
+
+## 2026-04-29 — Shared package dataset I/O implemented
+Three files added to `packages/shared/src/shared/`:
+
+- `enums.py` — all closed-vocabulary Python enums (`OpCategory`, `Dtype`, `Split`, `Difficulty`, `FinalOutcome`, `JudgeClassification`, `CompileStatus`, `CorrectnessStatus`). Re-exports `TolerancePolicy` from `tolerance.py` as a single import point.
+- `models.py` — Pydantic v2 models for `CorpusRecord` (eval_and_training.json shape) and `DatasetRow` (dataset_record.json shape), plus all sub-models. Cross-field invariants are enforced at validation time: shapes/dtypes length match, eval requires non-null difficulty, compile error null iff success, correctness null on compile failure, benchmark null on correctness failure, sequential attempt indices, winning attempt null iff outcome is a failure terminal.
+- `dataset/__init__.py` — five I/O functions: `load_corpus_train`, `merge_corpus`, `load_dataset`, `append_dataset_row`, `append_skipped`. `merge_corpus` deduplicates by `example_id` (first-seen wins) and reports skipped duplicates to stdout.
+
+v1 (80 rows) and v2 (110 rows) scraper outputs merged to `data/corpus_train.jsonl` (190 rows, zero duplicates). Duplicate `origin` strings within v1 are intentional — they represent distinct sub-graphs with different `input_shapes` and carry unique `example_id`s.
+
