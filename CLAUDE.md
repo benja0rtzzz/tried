@@ -61,6 +61,17 @@ These files encode experimental invariants. Editing them mid-experiment invalida
 - When writing the generator prompt, assume the model does not know Triton well. Give explicit block-size guidance. Do not include kernel examples.
 - Ask before adding dependencies to any package.
 
+## Logging
+
+All logging must go through the shared logger. Never use `print()`, `logging.getLogger()` directly, or any other logging implementation.
+
+```python
+from shared.logging import get_logger
+logger = get_logger(__name__)
+```
+
+Set `TRIED_ROLE=orchestrator` on the MacBook and `TRIED_ROLE=verification` on the Lenovo before running anything. The logger stamps every line with the machine role. Implementation: `packages/shared/src/shared/logging/__init__.py`.
+
 ## What NOT to do
 
 - **Never write Triton kernels.** Not as examples, not as fixes, not as references. No exceptions.
@@ -69,6 +80,7 @@ These files encode experimental invariants. Editing them mid-experiment invalida
 - Do not benchmark on battery power or with other GPU work running.
 - Do not edit the held-out eval set. Ever.
 - Do not change the prompt, schema, or tolerance policy mid-experiment.
+- Do not use `print()` or `logging.getLogger()` directly — always use `get_logger` from `shared.logging`.
 
 ## Current state
 

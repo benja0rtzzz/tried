@@ -19,7 +19,6 @@ _API_VERSION = "2025-01-01-preview"
 
 _client: AzureOpenAI | None = None
 
-
 def _get_client() -> AzureOpenAI:
     global _client
     if _client is None:

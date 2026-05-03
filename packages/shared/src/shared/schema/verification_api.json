@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tried.local/schemas/verification-api.json",
+  "title": "TRIED Verification API Contract",
+  "description": "HTTP request and response shapes for the four endpoints exposed by the Lenovo verification server. Enforced as Pydantic models in packages/shared/src/shared/verification/api.py. Both machines (orchestrator on MacBook, server on Lenovo) import from that module — this file is the single source of truth for the wire format.",
+  "type": "object",
+  "$defs": {
+    "preflight_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One-time check per job sent before the agent loop starts. The server runs PyTorch eager and torch.compile+Inductor on the same inputs and verifies they agree within the requested tolerance. If they do not, the example is written to skipped.jsonl and the agent loop never starts.",
+      "required": ["pytorch_code", "input_shapes", "input_dtypes", "rng_seed", "tolerance_policy"],
+      "properties": {
+        "pytorch_code":     { "type": "string", "description": "Standalone PyTorch function to evaluate. Must be executable with import torch only." },
+        "input_shapes":     { "$ref": "#/$defs/input_shapes" },
+        "input_dtypes":     { "$ref": "#/$defs/input_dtypes" },
+        "rng_seed":         { "$ref": "#/$defs/rng_seed" },
+        "tolerance_policy": { "$ref": "#/$defs/tolerance_policy" }
+      }
+    },
+
+    "preflight_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Result of the eager-vs-Inductor sanity check. passed=true means references agree and the agent loop may start. passed=false means the example is a skip. error_message is set when the harness itself failed (import error, shape error, OOM, etc.) rather than a tolerance disagreement.",
+      "required": ["passed", "vs_eager_inductor", "error_message"],
+      "properties": {
+        "passed": {
+          "type": "boolean",
+          "description": "True iff eager and Inductor outputs agree within tolerance_policy. False on tolerance failure or harness error."
+        },
+        "vs_eager_inductor": {
+          "anyOf": [{ "$ref": "#/$defs/correctness_stats" }, { "type": "null" }],
+          "description": "Agreement stats between eager and Inductor. Null when a harness error prevented comparison."
+        },
+        "error_message": {
+          "type": ["string", "null"],
+          "description": "Non-null only when the harness itself failed (not a tolerance failure). Null on clean pass or clean tolerance failure."
+        }
+      }
+    },
+
+    "compile_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Attempt to compile a generated Triton kernel. Called before /run to get a fast failure signal — compile errors are the most common failure mode for LLM-generated code.",
+      "required": ["triton_code"],
+      "properties": {
+        "triton_code": { "type": "string", "description": "Raw Triton kernel source produced by the generator. Sent verbatim from the orchestrator." }
+      }
+    },
+
+    "compile_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Result of attempting to compile the Triton kernel. On success the kernel is in the Triton JIT cache keyed by source hash; subsequent /run or /benchmark calls with the same triton_code will hit the cache.",
+      "required": ["status", "error_message"],
+      "properties": {
+        "status":        { "$ref": "#/$defs/compile_status" },
+        "error_message": {
+          "type": ["string", "null"],
+          "description": "Captured compiler error text. Non-null iff status == 'failed'."
+        }
+      }
+    },
+
+    "run_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Run the compiled kernel and compare its output against PyTorch eager and torch.compile+Inductor. The server reconstructs input tensors from shapes, dtypes, and rng_seed — tensors are never sent over the wire.",
+      "required": ["triton_code", "pytorch_code", "input_shapes", "input_dtypes", "rng_seed", "tolerance_policy"],
+      "properties": {
+        "triton_code":      { "type": "string", "description": "Same kernel source sent to /compile. Triton JIT cache will be a hit if /compile was called first with identical code." },
+        "pytorch_code":     { "type": "string", "description": "PyTorch reference function used to generate the eager and Inductor outputs for comparison." },
+        "input_shapes":     { "$ref": "#/$defs/input_shapes" },
+        "input_dtypes":     { "$ref": "#/$defs/input_dtypes" },
+        "rng_seed":         { "$ref": "#/$defs/rng_seed" },
+        "tolerance_policy": { "$ref": "#/$defs/tolerance_policy" }
+      }
+    },
+
+    "run_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Correctness comparison between the Triton candidate and both reference implementations. All fields except error_message are null when a runtime error (not a compile error) prevented execution.",
+      "required": ["correctness_status", "tolerance_policy_used", "vs_eager", "vs_inductor", "error_message"],
+      "properties": {
+        "correctness_status": {
+          "anyOf": [{ "$ref": "#/$defs/correctness_status" }, { "type": "null" }],
+          "description": "Whether the Triton output agreed with PyTorch eager within tolerance. Null on runtime error."
+        },
+        "tolerance_policy_used": {
+          "anyOf": [{ "$ref": "#/$defs/tolerance_policy" }, { "type": "null" }],
+          "description": "The policy key actually used for this comparison. Echoed from the request. Null on runtime error."
+        },
+        "vs_eager": {
+          "anyOf": [{ "$ref": "#/$defs/correctness_stats" }, { "type": "null" }],
+          "description": "Primary comparison: Triton vs PyTorch eager. Null on runtime error."
+        },
+        "vs_inductor": {
+          "anyOf": [{ "$ref": "#/$defs/correctness_stats" }, { "type": "null" }],
+          "description": "Secondary comparison: Triton vs torch.compile+Inductor. Null on runtime error."
+        },
+        "error_message": {
+          "type": ["string", "null"],
+          "description": "Non-null only when a runtime error prevented execution. Null on both clean pass and clean numeric failure."
+        }
+      }
+    },
+
+    "benchmark_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Time a correctness-passing kernel against eager and Inductor baselines. Caller must have confirmed correctness_status == 'passed' from /run before calling this endpoint. Returns a job_accepted immediately (HTTP 202); poll GET /jobs/{job_id} for the result. Protocol: 10 warmup runs (not timed), 100 timed runs, median reported, CUDA events used, synchronized start and end.",
+      "required": ["triton_code", "pytorch_code", "input_shapes", "input_dtypes", "rng_seed"],
+      "properties": {
+        "triton_code":  { "type": "string", "description": "Same kernel source used in /compile and /run. Triton JIT cache will be a hit." },
+        "pytorch_code": { "type": "string", "description": "PyTorch reference function. Used to time eager and Inductor baselines." },
+        "input_shapes": { "$ref": "#/$defs/input_shapes" },
+        "input_dtypes": { "$ref": "#/$defs/input_dtypes" },
+        "rng_seed":     { "$ref": "#/$defs/rng_seed" }
+      }
+    },
+
+    "benchmark_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Timing results for the Triton kernel and both baselines. Returned as the result field inside job_status once the job reaches done. Speedups are the primary metric; absolute ms are recorded for reproducibility. Field names and semantics match the benchmark sub-model in dataset_record.json.",
+      "required": [
+        "triton_ms", "eager_ms", "inductor_ms",
+        "speedup_vs_eager", "speedup_vs_inductor",
+        "triton_std_ms", "eager_std_ms", "inductor_std_ms"
+      ],
+      "properties": {
+        "triton_ms":           { "type": "number", "exclusiveMinimum": 0, "description": "Median wall time of the Triton kernel across 100 runs, in milliseconds." },
+        "eager_ms":            { "type": "number", "exclusiveMinimum": 0, "description": "Median wall time of PyTorch eager across 100 runs, in milliseconds." },
+        "inductor_ms":         { "type": "number", "exclusiveMinimum": 0, "description": "Median wall time of torch.compile+Inductor across 100 runs, in milliseconds." },
+        "speedup_vs_eager":    { "type": "number", "exclusiveMinimum": 0, "description": "eager_ms / triton_ms. Values >1.0 mean Triton is faster than eager." },
+        "speedup_vs_inductor": { "type": "number", "exclusiveMinimum": 0, "description": "inductor_ms / triton_ms. Values >1.0 mean Triton beats Inductor." },
+        "triton_std_ms":       { "type": "number", "minimum": 0, "description": "Standard deviation of the 100 Triton timing runs, in milliseconds." },
+        "eager_std_ms":        { "type": "number", "minimum": 0, "description": "Standard deviation of the 100 eager timing runs, in milliseconds." },
+        "inductor_std_ms":     { "type": "number", "minimum": 0, "description": "Standard deviation of the 100 Inductor timing runs, in milliseconds." }
+      }
+    },
+
+    "job_accepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Immediate response (HTTP 202) from POST /benchmark. The orchestrator uses job_id to poll GET /jobs/{job_id} until the job reaches done or error.",
+      "required": ["job_id"],
+      "properties": {
+        "job_id": { "type": "string", "description": "UUID identifying this benchmark job. Stable for the lifetime of the server process." }
+      }
+    },
+
+    "job_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Response from GET /jobs/{job_id}. Orchestrator polls this until status is done or error.",
+      "required": ["status", "result", "error_message"],
+      "properties": {
+        "status": { "$ref": "#/$defs/job_status_value" },
+        "result": {
+          "anyOf": [{ "$ref": "#/$defs/benchmark_response" }, { "type": "null" }],
+          "description": "The benchmark result. Non-null only when status == done."
+        },
+        "error_message": {
+          "type": ["string", "null"],
+          "description": "Non-null only when status == error. Null otherwise."
+        }
+      }
+    },
+
+    "job_status_value": {
+      "type": "string",
+      "enum": ["pending", "running", "done", "error"],
+      "description": "Lifecycle of an async benchmark job. pending: queued, not started. running: actively executing. done: result available. error: failed, check error_message."
+    },
+
+    "correctness_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Five-number agreement summary between two output tensors. Same shape as correctness_stats in dataset_record.json.",
+      "required": [
+        "max_abs_diff", "max_rel_diff", "mean_abs_diff",
+        "n_elements_exceeding_tol", "pct_elements_exceeding_tol"
+      ],
+      "properties": {
+        "max_abs_diff":               { "type": "number", "minimum": 0, "description": "max(|a - b|) over all elements." },
+        "max_rel_diff":               { "type": "number", "minimum": 0, "description": "max(|a - b| / (|b| + eps)) over all elements." },
+        "mean_abs_diff":              { "type": "number", "minimum": 0, "description": "mean(|a - b|) over all elements." },
+        "n_elements_exceeding_tol":   { "type": "integer", "minimum": 0, "description": "Count of elements that fail the tolerance policy." },
+        "pct_elements_exceeding_tol": { "type": "number", "minimum": 0, "maximum": 100, "description": "n_elements_exceeding_tol as a percentage of total elements." }
+      }
+    },
+
+    "input_shapes": {
+      "type": "array",
+      "description": "Shape of each input tensor. Length must equal length of input_dtypes.",
+      "minItems": 1,
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "items": { "type": "integer", "minimum": 1 }
+      }
+    },
+
+    "input_dtypes": {
+      "type": "array",
+      "description": "Dtype of each input tensor. Length must equal length of input_shapes.",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/dtype" }
+    },
+
+    "rng_seed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "RNG seed used to reconstruct input tensors on the server. Must match the value in the corpus record."
+    },
+
+    "dtype": {
+      "type": "string",
+      "enum": ["float16", "float32", "bfloat16", "float64", "int8", "int16", "int32", "int64", "bool"],
+      "description": "Input tensor dtype. Closed vocabulary — matches Dtype enum in enums.py."
+    },
+
+    "tolerance_policy": {
+      "type": "string",
+      "enum": [
+        "default_fp32", "default_fp16",
+        "reduction_fp32", "reduction_fp16",
+        "exact_integer", "masked_logits",
+        "attention_softmax_fp16", "recurrent_scan_fp16",
+        "low_precision_dequant", "fp8_cast"
+      ],
+      "description": "Key into packages/shared/src/shared/verification/tolerance.py. Closed vocabulary — that module is the source of truth for atol/rtol values and comparison semantics."
+    },
+
+    "compile_status": {
+      "type": "string",
+      "enum": ["success", "failed"],
+      "description": "Closed vocabulary — matches CompileStatus enum in enums.py."
+    },
+
+    "correctness_status": {
+      "type": "string",
+      "enum": ["passed", "failed"],
+      "description": "Closed vocabulary — matches CorrectnessStatus enum in enums.py."
+    }
+  }
+}

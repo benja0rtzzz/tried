@@ -17,7 +17,10 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from shared.logging import get_logger
 from shared.models import CorpusRecord, DatasetRow
+
+_log = get_logger(__name__)
 
 __all__ = [
     "load_corpus_train",
@@ -69,9 +72,9 @@ def merge_corpus(
     for src in source_paths:
         for record in load_corpus_train(src):
             if record.example_id in seen:
-                print(
-                    f"[merge_corpus] duplicate example_id={record.example_id} "
-                    f"origin={record.origin} (from {src}) — skipped"
+                _log.warning(
+                    "duplicate example_id=%s origin=%s (from %s) — skipped",
+                    record.example_id, record.origin, src,
                 )
             else:
                 seen[record.example_id] = record
@@ -81,7 +84,7 @@ def merge_corpus(
         for record in merged:
             f.write(record.model_dump_json() + "\n")
 
-    print(f"[merge_corpus] wrote {len(merged)} rows → {output_path}")
+    _log.info("merge_corpus wrote %d rows → %s", len(merged), output_path)
     return merged
 
 
