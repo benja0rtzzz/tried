@@ -24,3 +24,5 @@ data/
 .vscode/
 .idea/
 *.swp
+
+tests/
