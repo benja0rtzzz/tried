@@ -112,6 +112,9 @@ class Benchmark(BaseModel):
     inductor_ms:         float = Field(gt=0)
     speedup_vs_eager:    float = Field(gt=0)
     speedup_vs_inductor: float = Field(gt=0)
+    triton_std_ms:       float = Field(ge=0)
+    eager_std_ms:        float = Field(ge=0)
+    inductor_std_ms:     float = Field(ge=0)
 
 
 class Latency(BaseModel):

@@ -1,0 +1,9 @@
+Translate the following PyTorch function to a Triton kernel.
+
+PyTorch function:
+{pytorch_code}
+
+Input shapes: {input_shapes}
+Input dtypes: {input_dtypes}
+{prior_advice_section}
+Output only the Python code.
