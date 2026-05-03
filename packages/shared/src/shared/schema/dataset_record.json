@@ -215,7 +215,10 @@
         "eager_ms",
         "inductor_ms",
         "speedup_vs_eager",
-        "speedup_vs_inductor"
+        "speedup_vs_inductor",
+        "triton_std_ms",
+        "eager_std_ms",
+        "inductor_std_ms"
       ],
       "properties": {
         "triton_ms": {
@@ -242,6 +245,21 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "inductor_ms / triton_ms. >1.0 means Triton is faster than Inductor."
+        },
+        "triton_std_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Standard deviation of the 100 Triton timing runs, in milliseconds. Measures timing stability."
+        },
+        "eager_std_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Standard deviation of the 100 eager timing runs, in milliseconds."
+        },
+        "inductor_std_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Standard deviation of the 100 Inductor timing runs, in milliseconds."
         }
       }
     },

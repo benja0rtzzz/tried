@@ -66,6 +66,24 @@ Added `quantization` to `op_category`. Covers affine quant/dequant, fake quant, 
 
 ---
 
+## 2026-05-01 — Benchmark timing variance added; tags removed
+
+Added `triton_std_ms`, `eager_std_ms`, `inductor_std_ms` to the `benchmark` block (schema + Pydantic model). The Lenovo already runs 100 timing iterations to compute the median; std dev is free from those same samples. Without variance, speedup claims in the paper have no error bars. The three fields are required (non-nullable) alongside the existing ms fields.
+
+`tags` removed from schema, CLAUDE.md, and docs/schema.md. It was initially planned as a multi-label stratification field but turned out to be redundant with `op_category`, which already carries the same information. No Enum or schema field was ever written for it; the removal is a documentation cleanup only.
+
+---
+
+## 2026-05-01 — Generator and judge prompt design locked
+
+**Generator prompt structure:** System prompt provides Triton fundamentals and explicit block-size guidance (powers of 2, per-op defaults, masking requirement). User prompt supplies `pytorch_code`, `input_shapes`, `input_dtypes`, and an optional `prior_advice_section` that is empty on attempt 0 and renders the judge's fix suggestion on retries. No kernel examples in the prompt — the model stands on its own.
+
+**Judge prompt structure:** System prompt defines the classification task, the closed vocabulary (9 labels matching `JudgeClassification` enum exactly), and the no-kernel-generation rule. Each judge call is stateless — a fresh API call with a single user message. Prior attempts are embedded as structured text blocks (code + result + fix suggestion per attempt), not sent as a multi-turn message array. This keeps each call independent and makes the system prompt fully cacheable.
+
+**Judge model:** o4-mini, temperature 0. Reasoning capability chosen for fix suggestion quality, not classification. Cost is negligible at experiment scale (~600 total calls, ~$1.25 total). Structured output via `response_format` JSON schema: `{"classification": "<label>", "fix_suggestion": "<string|null>"}`.
+
+---
+
 ## 2026-04-29 — Shared package dataset I/O implemented
 Three files added to `packages/shared/src/shared/`:
 

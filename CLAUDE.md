@@ -39,7 +39,7 @@ tried/
 
 - **The held-out evaluation set is sacred.** `eval/holdout/` must NEVER enter training, RAG retrieval, or prompt examples. If unsure whether an example belongs here, assume eval and ask.
 - **Every attempt goes in the dataset.** Including failures. Never delete failed attempts — they are material for DPO and error-pattern retrieval.
-- **Closed vocabularies are enforced in code.** `judge_classification`, `final_outcome`, `op_category`, `tolerance_policy_used`, `tags` — all Python Enums, validated before write. Never invent a new value; add to the Enum first and discuss with the team.
+- **Closed vocabularies are enforced in code.** `judge_classification`, `final_outcome`, `op_category`, `tolerance_policy_used` — all Python Enums, validated before write. Never invent a new value; add to the Enum first and discuss with the team.
 - **Tolerance policy lives in one place.** `packages/shared/src/shared/verification/tolerance.py` is the single source of truth. Don't hardcode `atol`/`rtol` anywhere else. Record the policy key used with every correctness check.
 - **Record all 10 correctness numbers** (5 stats × eager and Inductor): `max_abs_diff`, `max_rel_diff`, `mean_abs_diff`, `n_elements_exceeding_tol`, `pct_elements_exceeding_tol`.
 - **Benchmarks are always relative.** Report speedup vs eager and vs Inductor. Absolute ms is not the primary metric.
