@@ -4,10 +4,10 @@
 
 **Decision made for:** Qwen2.5-Coder-14B.
 
-## Judge (Azure OpenAI)
+## Judge (Google AI Studio)
 
-**Current choice:** o4-mini.
+**Current choice:** Gemini 2.5 Flash.
 
 The judge only classifies outcomes and provides retry advice. It never generates Triton kernels.
 
-Do not fine-tune on Azure — deployment hosting burns the $100 credit in days.
+Thinking is enabled (`thinking_budget=1024`) for fix suggestion quality. Temperature is 0 for deterministic classification. Structured output enforced via `response_mime_type="application/json"` + `response_schema`. The free tier (1,500 req/day) covers the full experiment (~600 calls).

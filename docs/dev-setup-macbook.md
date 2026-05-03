@@ -24,14 +24,14 @@ The `tried-verification` package is **not** installed here — it's Lenovo-only 
 ollama pull qwen2.5-coder:14b
 ```
 
-## Azure OpenAI (judge)
+## Google AI Studio (judge)
 
-Set environment variables (do not commit these):
+Get a free API key at [aistudio.google.com](https://aistudio.google.com/). Set environment variables (do not commit these):
 
 ```bash
-export AZURE_OPENAI_ENDPOINT="https://<your-resource>.openai.azure.com/"
-export AZURE_OPENAI_API_KEY="..."
-export AZURE_OPENAI_DEPLOYMENT="o4-mini"
+export GEMINI_API_KEY="..."
+# Optional: pin to a specific model version (default: gemini-2.5-flash)
+export GEMINI_MODEL="gemini-2.5-flash"
 ```
 
 ## Running the orchestrator

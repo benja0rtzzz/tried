@@ -47,9 +47,9 @@ def generate(
     latency_ms = int((time.monotonic() - t0) * 1000)
 
     return GeneratorResult(
-        triton_code=_strip_fences(response.message.content),
-        prompt_tokens=response.prompt_eval_count,
-        completion_tokens=response.eval_count,
+        triton_code=_strip_fences(response.message.content or ""),
+        prompt_tokens=response.prompt_eval_count or 0,
+        completion_tokens=response.eval_count or 0,
         latency_ms=latency_ms,
     )
 

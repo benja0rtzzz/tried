@@ -1,7 +1,7 @@
 """
-Azure OpenAI client for the judge (o4-mini).
+Google AI Studio client for the judge (Gemini 2.5 Flash).
 Classifies each attempt and returns a targeted fix suggestion.
-Env vars required: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT.
+Env var required: GEMINI_API_KEY. Optional: GEMINI_MODEL (default: gemini-2.5-flash).
 """
 from __future__ import annotations
 
@@ -9,29 +9,27 @@ import os
 import time
 from dataclasses import dataclass
 
-from openai import AzureOpenAI
+from google import genai
+from google.genai import types
 from pydantic import BaseModel
 
 from orchestrator.prompts.judge import SYSTEM, AttemptContext, build_user_prompt
 from shared.enums import JudgeClassification
 
-_API_VERSION = "2025-01-01-preview"
+_DEFAULT_MODEL = "gemini-2.5-flash"
 
-_client: AzureOpenAI | None = None
+_client: genai.Client | None = None
 
-def _get_client() -> AzureOpenAI:
+
+def _get_client() -> genai.Client:
     global _client
     if _client is None:
-        _client = AzureOpenAI(
-            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-            api_key=os.environ["AZURE_OPENAI_API_KEY"],
-            api_version=_API_VERSION,
-        )
+        _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     return _client
 
 
-def _get_deployment() -> str:
-    return os.environ.get("AZURE_OPENAI_DEPLOYMENT", "o4-mini")
+def _get_model() -> str:
+    return os.environ.get("GEMINI_MODEL", _DEFAULT_MODEL)
 
 
 class _JudgeResponse(BaseModel):
@@ -52,7 +50,7 @@ def judge(
     pytorch_code: str,
     attempts: list[AttemptContext],
 ) -> JudgeResult:
-    """Call the Azure judge and return a classification with optional fix advice.
+    """Call the Gemini judge and return a classification with optional fix advice.
 
     attempts is the full list of attempt contexts in order; the last entry is
     the current attempt being judged.
@@ -60,23 +58,30 @@ def judge(
     user_msg = build_user_prompt(pytorch_code, attempts)
 
     t0 = time.monotonic()
-    completion = _get_client().beta.chat.completions.parse(
-        model=_get_deployment(),
-        messages=[
-            {"role": "system", "content": SYSTEM},
-            {"role": "user",   "content": user_msg},
-        ],
-        response_format=_JudgeResponse,
+    response = _get_client().models.generate_content(
+        model=_get_model(),
+        contents=user_msg,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM,
+            response_mime_type="application/json",
+            response_schema=_JudgeResponse,
+            temperature=0.0,
+            thinking_config=types.ThinkingConfig(thinking_budget=1024),
+        ),
     )
     latency_ms = int((time.monotonic() - t0) * 1000)
 
-    parsed = completion.choices[0].message.parsed
-    usage = completion.usage
+    raw = response.text
+    if not raw:
+        raise RuntimeError("Judge response was empty")
+
+    parsed = _JudgeResponse.model_validate_json(raw)
+    usage = response.usage_metadata
 
     return JudgeResult(
         classification=parsed.classification,
         fix_suggestion=parsed.fix_suggestion,
-        prompt_tokens=usage.prompt_tokens,
-        completion_tokens=usage.completion_tokens,
+        prompt_tokens=usage.prompt_token_count or 0 if usage else 0,
+        completion_tokens=usage.candidates_token_count or 0 if usage else 0,
         latency_ms=latency_ms,
     )

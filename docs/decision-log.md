@@ -80,7 +80,7 @@ Added `triton_std_ms`, `eager_std_ms`, `inductor_std_ms` to the `benchmark` bloc
 
 **Judge prompt structure:** System prompt defines the classification task, the closed vocabulary (9 labels matching `JudgeClassification` enum exactly), and the no-kernel-generation rule. Each judge call is stateless — a fresh API call with a single user message. Prior attempts are embedded as structured text blocks (code + result + fix suggestion per attempt), not sent as a multi-turn message array. This keeps each call independent and makes the system prompt fully cacheable.
 
-**Judge model:** o4-mini, temperature 0. Reasoning capability chosen for fix suggestion quality, not classification. Cost is negligible at experiment scale (~600 total calls, ~$1.25 total). Structured output via `response_format` JSON schema: `{"classification": "<label>", "fix_suggestion": "<string|null>"}`.
+**Judge model:** Gemini 2.5 Flash (Google AI Studio), temperature 0, `thinking_budget=1024`. Reasoning capability chosen for fix suggestion quality, not classification. Free tier covers the full experiment (~600 calls). Structured output via `response_mime_type="application/json"` + `response_schema` Pydantic model: `{"classification": "<label>", "fix_suggestion": "<string|null>"}`.
 
 ---
 
