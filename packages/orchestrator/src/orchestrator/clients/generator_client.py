@@ -14,7 +14,6 @@ from orchestrator.prompts.generator import SYSTEM, build_user_prompt
 
 _MODEL = "qwen2.5-coder:14b"
 
-
 @dataclass
 class GeneratorResult:
     triton_code:       str
