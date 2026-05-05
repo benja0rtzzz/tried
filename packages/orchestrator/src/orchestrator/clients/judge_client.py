@@ -2,6 +2,10 @@
 Google AI Studio client for the judge (Gemini 2.5 Flash).
 Classifies each attempt and returns a targeted fix suggestion.
 Env var required: GEMINI_API_KEY. Optional: GEMINI_MODEL (default: gemini-2.5-flash).
+
+Raises RateLimitError when the Gemini quota is exhausted (HTTP 429). The
+orchestrator main loop catches this and stops cleanly so the run can be resumed
+after the quota resets.
 """
 from __future__ import annotations
 
@@ -17,6 +21,10 @@ from orchestrator.prompts.judge import SYSTEM, AttemptContext, build_user_prompt
 from shared.enums import JudgeClassification
 
 _DEFAULT_MODEL = "gemini-2.5-flash"
+
+
+class RateLimitError(Exception):
+    """Gemini API quota exhausted. Restart after the daily reset."""
 
 _client: genai.Client | None = None
 
@@ -58,17 +66,23 @@ def judge(
     user_msg = build_user_prompt(pytorch_code, attempts)
 
     t0 = time.monotonic()
-    response = _get_client().models.generate_content(
-        model=_get_model(),
-        contents=user_msg,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM,
-            response_mime_type="application/json",
-            response_schema=_JudgeResponse,
-            temperature=0.0,
-            thinking_config=types.ThinkingConfig(thinking_budget=1024),
-        ),
-    )
+    try:
+        response = _get_client().models.generate_content(
+            model=_get_model(),
+            contents=user_msg,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM,
+                response_mime_type="application/json",
+                response_schema=_JudgeResponse,
+                temperature=0.0,
+                thinking_config=types.ThinkingConfig(thinking_budget=1024),
+            ),
+        )
+    except Exception as exc:
+        msg = str(exc)
+        if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
+            raise RateLimitError(f"Gemini quota exhausted: {exc}") from exc
+        raise
     latency_ms = int((time.monotonic() - t0) * 1000)
 
     raw = response.text
