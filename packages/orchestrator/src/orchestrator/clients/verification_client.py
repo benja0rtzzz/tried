@@ -30,9 +30,10 @@ from shared.verification.api import (
 
 _log = get_logger(__name__)
 
-_TIMEOUT        = 30.0   # for all synchronous endpoints
-_POLL_INTERVAL  = 5.0    # seconds between job status checks
-_POLL_TIMEOUT   = float(os.getenv("VERIFICATION_POLL_TIMEOUT_S", "600"))
+_COMPILE_TIMEOUT  = 30.0   # /compile — Python exec only, fast
+_INDUCTOR_TIMEOUT = float(os.getenv("VERIFICATION_INDUCTOR_TIMEOUT_S", "300"))  # /preflight, /run — trigger torch.compile(inductor)
+_POLL_INTERVAL    = 5.0    # seconds between job status checks
+_POLL_TIMEOUT     = float(os.getenv("VERIFICATION_POLL_TIMEOUT_S", "600"))
 
 _T = TypeVar("_T", bound=BaseModel)
 
@@ -46,16 +47,16 @@ class VerificationClient:
         }
 
     def preflight(self, request: PreflightRequest) -> PreflightResponse:
-        return self._post("/preflight", request, PreflightResponse)
+        return self._post("/preflight", request, PreflightResponse, timeout=_INDUCTOR_TIMEOUT)
 
     def compile(self, request: CompileRequest) -> CompileResponse:
-        return self._post("/compile", request, CompileResponse)
+        return self._post("/compile", request, CompileResponse, timeout=_COMPILE_TIMEOUT)
 
     def run(self, request: RunRequest) -> RunResponse:
-        return self._post("/run", request, RunResponse)
+        return self._post("/run", request, RunResponse, timeout=_INDUCTOR_TIMEOUT)
 
     def benchmark(self, request: BenchmarkRequest) -> BenchmarkResponse:
-        job: JobAccepted = self._post("/benchmark", request, JobAccepted)
+        job: JobAccepted = self._post("/benchmark", request, JobAccepted, timeout=_COMPILE_TIMEOUT)
         _log.info("Benchmark job %s accepted — polling every %.0fs", job.job_id, _POLL_INTERVAL)
         return self._poll(job.job_id)
 
@@ -65,7 +66,7 @@ class VerificationClient:
         while time.monotonic() < deadline:
             time.sleep(_POLL_INTERVAL)
             try:
-                response = httpx.get(url, headers=self._headers, timeout=_TIMEOUT)
+                response = httpx.get(url, headers=self._headers, timeout=_COMPILE_TIMEOUT)
                 response.raise_for_status()
             except httpx.ConnectError:
                 _log.error("Verification server unreachable while polling %s", url)
@@ -83,14 +84,14 @@ class VerificationClient:
             _log.info("Benchmark job %s — %s", job_id, status.status.value)
         raise TimeoutError(f"Benchmark job {job_id} did not complete within {_POLL_TIMEOUT:.0f}s")
 
-    def _post(self, path: str, request: BaseModel, response_model: Type[_T]) -> _T:
+    def _post(self, path: str, request: BaseModel, response_model: Type[_T], *, timeout: float) -> _T:
         url = self._base_url + path
         try:
             response = httpx.post(
                 url,
                 content=request.model_dump_json(),
                 headers=self._headers,
-                timeout=_TIMEOUT,
+                timeout=timeout,
             )
             response.raise_for_status()
             return response_model.model_validate(response.json())
@@ -98,7 +99,7 @@ class VerificationClient:
             _log.error("Verification server unreachable at %s", url)
             raise
         except httpx.TimeoutException:
-            _log.error("Request to %s timed out after %.0fs", url, _TIMEOUT)
+            _log.error("Request to %s timed out after %.0fs", url, timeout)
             raise
         except httpx.HTTPStatusError as e:
             _log.error(
