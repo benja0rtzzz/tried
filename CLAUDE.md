@@ -84,7 +84,14 @@ Set `TRIED_ROLE=orchestrator` on the MacBook and `TRIED_ROLE=verification` on th
 
 ## Current state
 
-Week 1 of an 8-week project. Schema, tolerance policy module, held-out eval set locked, model bakeoff results.
+Week 2 of an 8-week project. Full pipeline operational and ready for data collection.
+
+- Schema, tolerance policy, held-out eval set locked.
+- Verification server complete: `/health`, `/preflight`, `/compile`, `/run`, `/benchmark`, `/jobs/{id}`. Smoke-tested on Lenovo (RTX 4060, CUDA + Inductor + CUDA-Event timing confirmed). `VERIFICATION_API_KEY` enforced at startup.
+- Orchestrator complete: agent loop, generator client (Ollama/qwen2.5-coder:14b), judge client (Gemini 2.5 Flash), dataset I/O, corpus loading.
+- `packages/tests` (`tried-tests`) holds the end-to-end smoke test (`tried_tests.smoke`).
+- Resume logic in `main.py`: on restart, already-completed and preflight-skipped examples are filtered out so no example is processed twice.
+- Gemini rate-limit handling: hitting a 429 stops the run cleanly; restart resumes from where it left off.
 
 ## Docs knowledge base
 

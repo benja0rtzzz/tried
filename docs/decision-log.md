@@ -93,3 +93,27 @@ Three files added to `packages/shared/src/shared/`:
 
 v1 (80 rows) and v2 (110 rows) scraper outputs merged to `data/corpus_train.jsonl` (190 rows, zero duplicates). Duplicate `origin` strings within v1 are intentional — they represent distinct sub-graphs with different `input_shapes` and carry unique `example_id`s.
 
+---
+
+## 2026-05-04 — Verification server complete; orchestrator pipeline ready
+
+All packages operational. Key decisions made during bring-up:
+
+**Verification server (`packages/verification`):** `/health` endpoint added (CUDA availability, device stats, torch/triton versions). `VERIFICATION_API_KEY` now enforced at import time — server refuses to start if the env var is absent. Middleware unconditionally checks the key on every request.
+
+**HTTP timeouts split by endpoint:** `verification_client.py` previously used a single 30 s timeout for all synchronous endpoints. `/preflight` and `/run` both trigger `torch.compile(backend="inductor")`, which takes 60–120 s on cold start. Split into `_COMPILE_TIMEOUT=30 s` (for `/compile`, `/benchmark` submit, job polls) and `_INDUCTOR_TIMEOUT=300 s` (for `/preflight` and `/run`). Configurable via `VERIFICATION_INDUCTOR_TIMEOUT_S` env var.
+
+**Smoke test package (`packages/tests`, module `tried_tests`):** End-to-end test using the first corpus entry (`elementwise_clamp_square_fp32`, 1 M × float32). Uses the same PyTorch wrapper as both reference and candidate — exercises every GPU code path (Inductor JIT, CUDA execution, CUDA-Event timing, async benchmark job) with guaranteed correctness PASSED. Run: `TRIED_ROLE=verification VERIFICATION_API_KEY=<key> uv run python -m tried_tests.smoke`. Note: module named `tried_tests` (not `tests`) because hatchling silently excludes directories named `tests` from editable installs.
+
+**Lenovo system deps required for Inductor:** `gcc` and `python3.12-dev` must be installed (`sudo apt install gcc g++ python3.12-dev`). Inductor generates C code that it compiles at runtime; without these, `/preflight` and `/run` fail with a compiler error.
+
+---
+
+## 2026-05-04 — Run resume and Gemini rate-limit handling
+
+**Problem:** Gemini 2.5 Flash free tier resets daily. If the quota is exhausted mid-run, the process should stop cleanly rather than crash, and restart should continue from where it left off without re-processing any example.
+
+**Resume logic (`main.py`):** On startup, `dataset.jsonl` and `skipped.jsonl` are read to collect all already-processed `example_id`s. The corpus list is filtered to exclude them before the loop starts. Log line reports how many are skipped. Cost: one extra file read at startup — negligible.
+
+**Rate-limit detection (`judge_client.py`):** A `RateLimitError` exception is raised when the Gemini response signals quota exhaustion (HTTP 429, or message containing "quota"/"rate limit"). It propagates through `agent.py` (no catch there) to `main.py`, where it is caught before the generic transport-error handler. On `RateLimitError`, the run logs progress and exits cleanly with code 0. The next restart picks up from the resume filter.
+

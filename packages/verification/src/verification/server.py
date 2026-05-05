@@ -11,10 +11,13 @@ import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Optional
 
+import torch
+import triton
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from shared.logging import get_logger
 from shared.verification.api import (
@@ -40,6 +43,19 @@ _log = get_logger(__name__)
 app = FastAPI(title="tried-verification")
 
 _API_KEY: str = os.environ.get("VERIFICATION_API_KEY", "")
+if not _API_KEY:
+    raise RuntimeError("VERIFICATION_API_KEY environment variable is not set")
+
+
+class _HealthResponse(BaseModel):
+    cuda_available: bool
+    device_name: Optional[str] = None
+    device_count: int = 0
+    memory_allocated_mb: float = 0.0
+    memory_reserved_mb: float = 0.0
+    memory_total_mb: float = 0.0
+    torch_version: str = ""
+    triton_version: str = ""
 
 # Single-worker pool serialises GPU work; benchmark runs are long and must not overlap.
 _executor    = ThreadPoolExecutor(max_workers=1)
@@ -49,13 +65,34 @@ _jobs_lock   = threading.Lock()
 
 @app.middleware("http")
 async def _auth(request: Request, call_next):
-    if _API_KEY:
-        if request.headers.get("X-API-Key", "") != _API_KEY:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Invalid or missing API key"},
-            )
+    if request.headers.get("X-API-Key", "") != _API_KEY:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Invalid or missing API key"},
+        )
     return await call_next(request)
+
+
+@app.get("/health")
+async def health_endpoint():
+    cuda = torch.cuda.is_available()
+    if cuda:
+        props = torch.cuda.get_device_properties(0)
+        return _HealthResponse(
+            cuda_available=True,
+            device_name=torch.cuda.get_device_name(0),
+            device_count=torch.cuda.device_count(),
+            memory_allocated_mb=round(torch.cuda.memory_allocated(0) / 1024**2, 2),
+            memory_reserved_mb=round(torch.cuda.memory_reserved(0) / 1024**2, 2),
+            memory_total_mb=round(props.total_memory / 1024**2, 2),
+            torch_version=torch.__version__,
+            triton_version=triton.__version__,
+        )
+    return _HealthResponse(
+        cuda_available=False,
+        torch_version=torch.__version__,
+        triton_version=triton.__version__,
+    )
 
 
 @app.post("/preflight")

@@ -7,6 +7,7 @@ members = [
     "tried",
     "tried-orchestrator",
     "tried-shared",
+    "tried-tests",
     "tried-verification",
 ]
 
@@ -1706,6 +1707,23 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "pydantic", specifier = ">=2.0" }]
+
+[[package]]
+name = "tried-tests"
+version = "0.1.0"
+source = { editable = "packages/tests" }
+dependencies = [
+    { name = "httpx" },
+    { name = "tried-shared" },
+    { name = "tried-verification" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "tried-shared", editable = "packages/shared" },
+    { name = "tried-verification", editable = "packages/verification" },
+]
 
 [[package]]
 name = "tried-verification"
