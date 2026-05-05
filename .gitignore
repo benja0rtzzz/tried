@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *.pyo
 .venv/
@@ -26,4 +27,4 @@ data/
 *.swp
 
 # tests/
-# .testdata/
+.testdata/

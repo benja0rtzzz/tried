@@ -41,7 +41,7 @@ _vc_module._POLL_INTERVAL = 0.2
 
 _MOCK_URL  = "http://127.0.0.1:8765"
 _TEST_KEY  = "test-key"
-_DATA_DIR  = Path(__file__).parent.parent / ".testdata"
+_DATA_DIR  = Path(__file__).parent.parent.parent / ".testdata"
 
 # ---------------------------------------------------------------------------
 # Shared response blocks
@@ -197,7 +197,7 @@ def mock_server():
     os.environ.setdefault("TRIED_ROLE", "orchestrator")
     _DATA_DIR.mkdir(exist_ok=True)
 
-    from tests.mock_server import app  # local import to avoid circular issues at module level
+    from mock_server import app  # local import to avoid circular issues at module level
 
     config = uvicorn.Config(app, host="127.0.0.1", port=8765, log_level="error")
     server = uvicorn.Server(config)
