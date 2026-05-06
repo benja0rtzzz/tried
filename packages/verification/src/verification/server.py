@@ -5,14 +5,15 @@ See docs/architecture.md for endpoint contract.
 Required env var: VERIFICATION_API_KEY
 Launch: CUDA_VISIBLE_DEVICES=0 uv run uvicorn verification.server:app --host 0.0.0.0 --port 8000
 """
+
 from __future__ import annotations
 
 import multiprocessing as mp
-from multiprocessing.pool import Pool as MpPool
 import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from multiprocessing.pool import Pool as MpPool
 from typing import Any, Optional
 
 import torch
@@ -20,7 +21,6 @@ import triton
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-
 from shared.enums import CorrectnessStatus
 from shared.logging import get_logger
 from shared.verification.api import (
@@ -67,15 +67,16 @@ class _HealthResponse(BaseModel):
     torch_version: str = ""
     triton_version: str = ""
 
+
 # Single-worker pool serialises GPU work; benchmark runs are long and must not overlap.
-_executor    = ThreadPoolExecutor(max_workers=1)
-_jobs:       dict[str, dict[str, Any]] = {}
-_jobs_lock   = threading.Lock()
+_executor = ThreadPoolExecutor(max_workers=1)
+_jobs: dict[str, dict[str, Any]] = {}
+_jobs_lock = threading.Lock()
 
 # Persistent subprocess for CUDA isolation. Spawned once; respawned automatically
 # after a CUDA crash. spawn context required — CUDA contexts are not fork-safe.
-_mp_ctx      = mp.get_context("spawn")
-_worker:     MpPool | None = None
+_mp_ctx = mp.get_context("spawn")
+_worker: MpPool | None = None
 _worker_lock = threading.Lock()
 
 
@@ -98,7 +99,9 @@ def _isolated(fn, **kwargs):
     try:
         return _get_worker().apply_async(fn, kwds=kwargs).get(timeout=_WORKER_TIMEOUT)
     except mp.TimeoutError:
-        _log.error("worker timed out after %.0fs; terminating and respawning", _WORKER_TIMEOUT)
+        _log.error(
+            "worker timed out after %.0fs; terminating and respawning", _WORKER_TIMEOUT
+        )
         with _worker_lock:
             if _worker is not None:
                 _worker.terminate()
@@ -151,7 +154,8 @@ async def health_endpoint():
 def preflight_endpoint(req: PreflightRequest):
     _log.info(
         "preflight  shapes=%s  policy=%s",
-        req.input_shapes, req.tolerance_policy.value,
+        req.input_shapes,
+        req.tolerance_policy.value,
     )
     try:
         return _isolated(
@@ -176,7 +180,8 @@ def compile_endpoint(req: CompileRequest):
 def run_endpoint(req: RunRequest):
     _log.info(
         "run  shapes=%s  policy=%s",
-        req.input_shapes, req.tolerance_policy.value,
+        req.input_shapes,
+        req.tolerance_policy.value,
     )
     try:
         return _isolated(
@@ -199,7 +204,11 @@ def run_endpoint(req: RunRequest):
 async def benchmark_endpoint(req: BenchmarkRequest):
     job_id = str(uuid.uuid4())
     with _jobs_lock:
-        _jobs[job_id] = {"status": JobStatusValue.PENDING, "result": None, "error": None}
+        _jobs[job_id] = {
+            "status": JobStatusValue.PENDING,
+            "result": None,
+            "error": None,
+        }
 
     def _run() -> None:
         with _jobs_lock:
@@ -223,7 +232,7 @@ async def benchmark_endpoint(req: BenchmarkRequest):
             _log.error("benchmark job %s failed: %s", job_id, msg)
             with _jobs_lock:
                 _jobs[job_id]["status"] = JobStatusValue.ERROR
-                _jobs[job_id]["error"]  = msg
+                _jobs[job_id]["error"] = msg
 
     _executor.submit(_run)
     _log.info("benchmark job %s accepted", job_id)
