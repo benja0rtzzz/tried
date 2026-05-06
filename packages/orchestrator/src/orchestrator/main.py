@@ -33,7 +33,7 @@ from orchestrator.clients.verification_client import make_client
 _log = get_logger(__name__)
 
 _REQUIRED_ENV = [
-    "GEMINI_API_KEY",
+    "OPENAI_API_KEY",
     "VERIFICATION_SERVER_URL",
     "VERIFICATION_API_KEY",
 ]

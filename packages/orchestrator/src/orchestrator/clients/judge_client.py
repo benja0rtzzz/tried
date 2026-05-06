@@ -1,43 +1,39 @@
 """
-Google AI Studio client for the judge (Gemini 2.5 Flash).
+OpenAI client for the judge (o4-mini).
 Classifies each attempt and returns a targeted fix suggestion.
-Env var required: GEMINI_API_KEY. Optional: GEMINI_MODEL (default: gemini-2.5-flash).
+Env vars required: OPENAI_API_KEY.
 
-Raises RateLimitError when the Gemini quota is exhausted (HTTP 429). The
-orchestrator main loop catches this and stops cleanly so the run can be resumed
-after the quota resets.
+Raises RateLimitError when the OpenAI quota is exhausted (HTTP 429). The
+orchestrator main loop catches this and stops cleanly so the run can be resumed.
 """
+
 from __future__ import annotations
 
 import os
 import time
 from dataclasses import dataclass
 
-from google import genai
-from google.genai import types
+import openai
 from pydantic import BaseModel
-
-from orchestrator.prompts.judge import SYSTEM, AttemptContext, build_user_prompt
 from shared.enums import JudgeClassification
 
-_DEFAULT_MODEL = "gemini-2.5-flash"
+from orchestrator.prompts.judge import SYSTEM, AttemptContext, build_user_prompt
+
+_MODEL = "o4-mini-2025-04-16"
 
 
 class RateLimitError(Exception):
-    """Gemini API quota exhausted. Restart after the daily reset."""
-
-_client: genai.Client | None = None
+    """OpenAI rate limit or quota exhausted."""
 
 
-def _get_client() -> genai.Client:
+_client: openai.OpenAI | None = None
+
+
+def _get_client() -> openai.OpenAI:
     global _client
     if _client is None:
-        _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+        _client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     return _client
-
-
-def _get_model() -> str:
-    return os.environ.get("GEMINI_MODEL", _DEFAULT_MODEL)
 
 
 class _JudgeResponse(BaseModel):
@@ -49,16 +45,16 @@ class _JudgeResponse(BaseModel):
 class JudgeResult:
     classification: JudgeClassification
     fix_suggestion: str | None
-    prompt_tokens:     int
+    prompt_tokens: int
     completion_tokens: int
-    latency_ms:        int
+    latency_ms: int
 
 
 def judge(
     pytorch_code: str,
     attempts: list[AttemptContext],
 ) -> JudgeResult:
-    """Call the Gemini judge and return a classification with optional fix advice.
+    """Call the o4-mini judge and return a classification with optional fix advice.
 
     attempts is the full list of attempt contexts in order; the last entry is
     the current attempt being judged.
@@ -67,35 +63,28 @@ def judge(
 
     t0 = time.monotonic()
     try:
-        response = _get_client().models.generate_content(
-            model=_get_model(),
-            contents=user_msg,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM,
-                response_mime_type="application/json",
-                response_schema=_JudgeResponse,
-                temperature=0.0,
-                thinking_config=types.ThinkingConfig(thinking_budget=1024),
-            ),
+        response = _get_client().beta.chat.completions.parse(
+            model=_MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM},
+                {"role": "user", "content": user_msg},
+            ],
+            response_format=_JudgeResponse,
+            reasoning_effort="high",
         )
-    except Exception as exc:
-        msg = str(exc)
-        if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
-            raise RateLimitError(f"Gemini quota exhausted: {exc}") from exc
-        raise
+    except openai.RateLimitError as exc:
+        raise RateLimitError(f"OpenAI rate limit exceeded: {exc}") from exc
     latency_ms = int((time.monotonic() - t0) * 1000)
 
-    raw = response.text
-    if not raw:
-        raise RuntimeError("Judge response was empty")
+    parsed = response.choices[0].message.parsed
+    if parsed is None:
+        raise RuntimeError("Judge response could not be parsed")
 
-    parsed = _JudgeResponse.model_validate_json(raw)
-    usage = response.usage_metadata
-
+    usage = response.usage
     return JudgeResult(
         classification=parsed.classification,
         fix_suggestion=parsed.fix_suggestion,
-        prompt_tokens=usage.prompt_token_count or 0 if usage else 0,
-        completion_tokens=usage.candidates_token_count or 0 if usage else 0,
+        prompt_tokens=usage.prompt_tokens if usage else 0,
+        completion_tokens=usage.completion_tokens if usage else 0,
         latency_ms=latency_ms,
     )

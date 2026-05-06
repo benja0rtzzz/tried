@@ -4,6 +4,14 @@ Lightweight record of non-obvious decisions. Full reasoning lives in the Claude 
 All entrees here are accepted.
 ---
 
+## 2026-05-06 — Judge switched from Gemini 2.5 Flash to OpenAI o4-mini
+
+Gemini 2.5 Flash was not producing useful fix suggestions — it classified most Triton JIT failures as `other` or repeated generic advice across retries. Root cause is model capability, not prompt design; expanding the prompt with error examples would paper over a reasoning gap rather than fix it.
+
+o4-mini is a dedicated reasoning model at a comparable price point (~$6–11 for the full experiment). It was the original architecture choice before the free-tier Gemini path was taken. `reasoning_effort="high"` replaces `thinking_budget=1024`. Structured output uses `.beta.chat.completions.parse` with the same Pydantic response model. `OPENAI_API_KEY` replaces `GEMINI_API_KEY`. Model and reasoning effort are hardcoded (`o4-mini`, `"high"`).
+
+---
+
 ## 2026-04-21 — Initial project structure
 UV workspace with three packages (`shared`, `orchestrator`, `verification`). Schema and tolerance policy are locked files — changes require a log entry and team sign-off.
 
@@ -116,4 +124,18 @@ All packages operational. Key decisions made during bring-up:
 **Resume logic (`main.py`):** On startup, `dataset.jsonl` and `skipped.jsonl` are read to collect all already-processed `example_id`s. The corpus list is filtered to exclude them before the loop starts. Log line reports how many are skipped. Cost: one extra file read at startup — negligible.
 
 **Rate-limit detection (`judge_client.py`):** A `RateLimitError` exception is raised when the Gemini response signals quota exhaustion (HTTP 429, or message containing "quota"/"rate limit"). It propagates through `agent.py` (no catch there) to `main.py`, where it is caught before the generic transport-error handler. On `RateLimitError`, the run logs progress and exits cleanly with code 0. The next restart picks up from the resume filter.
+
+---
+
+## 2026-05-05 — JudgeClassification enum revised; experiment restarted
+
+**Problem observed during test run:** The judge was classifying nearly all Triton JIT failures as `other` or `ambiguous`. Root cause: the generator (Qwen2.5-Coder:14b) makes systematic Triton API mistakes (int64 offset where int32 is required, constexpr parameters missing from the kernel signature, calling non-existent ops like `tl.tanh`, 2-D `tl.zeros` with a runtime dim) — a class of error with no specific label in the original enum, so the judge defaulted to catch-alls. The `other`/`ambiguous` distinction was also poorly defined, causing the judge to bounce between them arbitrarily.
+
+**Changes (experiment restarted; prior test data discarded):**
+- Added `triton_api_error` to `JudgeClassification`: covers wrong offset dtype, constexpr placement errors, unsupported Triton operations, and kernel launch signature mismatches.
+- Removed `ambiguous`; `other` is now the single fallback for clear failures that don't fit a specific label.
+- Judge system prompt updated with the new label (concrete examples included) and the tightened `other` definition.
+- JSON schema (`dataset_record.json`) updated to match.
+
+The Gemini structured-output response schema is derived from the Pydantic model at call time, so the client needed no changes.
 
