@@ -368,11 +368,11 @@
         "shape_mismatch",
         "dtype_mismatch",
         "indexing_error",
+        "triton_api_error",
         "correctness_failed_numeric",
         "correct_but_slower_than_inductor",
         "correct_and_competitive",
         "correct_and_faster",
-        "ambiguous",
         "other"
       ],
       "description": "Judge's classification of an attempt's outcome. Closed vocabulary. The judge is constrained at call time to values in this set."

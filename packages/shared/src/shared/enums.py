@@ -67,11 +67,11 @@ class JudgeClassification(str, Enum):
     SHAPE_MISMATCH                   = "shape_mismatch"
     DTYPE_MISMATCH                   = "dtype_mismatch"
     INDEXING_ERROR                   = "indexing_error"
+    TRITON_API_ERROR                 = "triton_api_error"
     CORRECTNESS_FAILED_NUMERIC       = "correctness_failed_numeric"
     CORRECT_BUT_SLOWER_THAN_INDUCTOR = "correct_but_slower_than_inductor"
     CORRECT_AND_COMPETITIVE          = "correct_and_competitive"
     CORRECT_AND_FASTER               = "correct_and_faster"
-    AMBIGUOUS                        = "ambiguous"
     OTHER                            = "other"
 
 
