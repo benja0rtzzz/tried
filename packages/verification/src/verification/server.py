@@ -7,6 +7,7 @@ Launch: CUDA_VISIBLE_DEVICES=0 uv run uvicorn verification.server:app --host 0.0
 """
 from __future__ import annotations
 
+import multiprocessing as mp
 import os
 import threading
 import uuid
@@ -62,6 +63,38 @@ _executor    = ThreadPoolExecutor(max_workers=1)
 _jobs:       dict[str, dict[str, Any]] = {}
 _jobs_lock   = threading.Lock()
 
+# Persistent subprocess for CUDA isolation. Spawned once; respawned automatically
+# after a CUDA crash. spawn context required — CUDA contexts are not fork-safe.
+_mp_ctx      = mp.get_context("spawn")
+_worker:     mp.pool.Pool | None = None
+_worker_lock = threading.Lock()
+
+
+def _get_worker() -> mp.pool.Pool:
+    global _worker
+    with _worker_lock:
+        if _worker is None:
+            _worker = _mp_ctx.Pool(1)
+    return _worker
+
+
+def _isolated(fn, **kwargs):
+    """Call fn(**kwargs) in the persistent worker subprocess.
+
+    If the worker died (CUDA context poisoned), terminates it and respawns
+    before retrying once. The retry uses a fresh CUDA context.
+    """
+    global _worker
+    try:
+        return _get_worker().apply(fn, kwds=kwargs)
+    except mp.ProcessError:
+        _log.warning("worker process died; respawning")
+        with _worker_lock:
+            if _worker is not None:
+                _worker.terminate()
+                _worker = None
+        return _get_worker().apply(fn, kwds=kwargs)
+
 
 @app.middleware("http")
 async def _auth(request: Request, call_next):
@@ -101,7 +134,8 @@ async def preflight_endpoint(req: PreflightRequest):
         "preflight  shapes=%s  policy=%s",
         req.input_shapes, req.tolerance_policy.value,
     )
-    return preflight(
+    return _isolated(
+        preflight,
         pytorch_code=req.pytorch_code,
         input_shapes=req.input_shapes,
         input_dtypes=req.input_dtypes,
@@ -122,7 +156,8 @@ async def run_endpoint(req: RunRequest):
         "run  shapes=%s  policy=%s",
         req.input_shapes, req.tolerance_policy.value,
     )
-    return run_verification(
+    return _isolated(
+        run_verification,
         triton_code=req.triton_code,
         pytorch_code=req.pytorch_code,
         input_shapes=req.input_shapes,
@@ -143,7 +178,8 @@ async def benchmark_endpoint(req: BenchmarkRequest):
             _jobs[job_id]["status"] = JobStatusValue.RUNNING
         _log.info("benchmark job %s running", job_id)
         try:
-            result: BenchmarkResponse = run_benchmark(
+            result: BenchmarkResponse = _isolated(
+                run_benchmark,
                 triton_code=req.triton_code,
                 pytorch_code=req.pytorch_code,
                 input_shapes=req.input_shapes,
@@ -177,3 +213,12 @@ async def job_status_endpoint(job_id: str):
         result=job["result"],
         error_message=job["error"],
     )
+
+
+@app.on_event("shutdown")
+async def _shutdown_worker():
+    global _worker
+    with _worker_lock:
+        if _worker is not None:
+            _worker.terminate()
+            _worker = None

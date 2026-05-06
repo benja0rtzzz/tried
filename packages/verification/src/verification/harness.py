@@ -4,25 +4,36 @@ Handles code loading, input generation, correctness comparison, and benchmarking
 All functions are synchronous and GPU-blocking — callers are responsible for
 threading/async wrapping.
 
-TODO (verify on Lenovo before first run):
-    _load_wrapper relies on @triton.jit producing a triton.JITFunction that is
-    NOT a types.FunctionType. If that assumption is wrong, _load_wrapper returns
-    the kernel instead of the wrapper and every /run call silently fails.
-    Confirm with:
-        import triton, types
-        @triton.jit
-        def k(): pass
-        assert not isinstance(k, types.FunctionType), "assumption broken — fix _load_wrapper"
+NOTE on _load_wrapper: code is written to a real .py tempfile before import.
+Triton's @triton.jit decorator calls inspect.getsource() at decoration time,
+which requires the function to live in a real file — exec("<string>") raises
+ValueError: @jit functions should be defined in a Python file.
+The tempfile is deleted after exec_module() returns; by then Triton has already
+read and cached the source inside the JITFunction object.
+
+_load_wrapper relies on @triton.jit producing a triton.JITFunction that is
+NOT a types.FunctionType. If that assumption is wrong, _load_wrapper returns
+the kernel instead of the wrapper and every /run call silently fails.
+Confirm with:
+    import triton, types
+    @triton.jit
+    def k(): pass
+    assert not isinstance(k, types.FunctionType), "assumption broken — fix _load_wrapper"
 """
+
 from __future__ import annotations
 
+import importlib.util
 import math
+import os
 import statistics
+import sys
+import tempfile
 import types
+import uuid
 from typing import Any
 
 import torch
-
 from shared.enums import CompileStatus, CorrectnessStatus, Dtype, TolerancePolicy
 from shared.logging import get_logger
 from shared.models import CorrectnessStats
@@ -32,30 +43,32 @@ from shared.verification.api import (
     PreflightResponse,
     RunResponse,
 )
-from shared.verification.tolerance import ComparisonMode, get as get_tolerance
+from shared.verification.tolerance import ComparisonMode
+from shared.verification.tolerance import get as get_tolerance
 
 _log = get_logger(__name__)
 
 _DTYPE_MAP: dict[str, torch.dtype] = {
-    Dtype.FLOAT16.value:  torch.float16,
-    Dtype.FLOAT32.value:  torch.float32,
+    Dtype.FLOAT16.value: torch.float16,
+    Dtype.FLOAT32.value: torch.float32,
     Dtype.BFLOAT16.value: torch.bfloat16,
-    Dtype.FLOAT64.value:  torch.float64,
-    Dtype.INT8.value:     torch.int8,
-    Dtype.INT16.value:    torch.int16,
-    Dtype.INT32.value:    torch.int32,
-    Dtype.INT64.value:    torch.int64,
-    Dtype.BOOL.value:     torch.bool,
+    Dtype.FLOAT64.value: torch.float64,
+    Dtype.INT8.value: torch.int8,
+    Dtype.INT16.value: torch.int16,
+    Dtype.INT32.value: torch.int32,
+    Dtype.INT64.value: torch.int64,
+    Dtype.BOOL.value: torch.bool,
 }
 
 _INTEGER_DTYPES = {torch.int8, torch.int16, torch.int32, torch.int64, torch.bool}
-_WARMUP_ITERS   = 10
-_TIMED_ITERS    = 100
+_WARMUP_ITERS = 10
+_TIMED_ITERS = 100
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_inputs(
     input_shapes: list[list[int]],
@@ -75,15 +88,35 @@ def _make_inputs(
 
 
 def _load_wrapper(code: str) -> types.FunctionType:
-    """exec() the code and return the last plain Python function defined in it.
+    """Write code to a temp .py file, import it, and return the wrapper function.
 
     For Triton code the @triton.jit kernel becomes a JITFunction (not
     types.FunctionType), so the last FunctionType is always the wrapper.
-    SyntaxError propagates to the caller.
+    The tempfile is deleted after the module is loaded; Triton caches source
+    internally during decoration so the file is not needed after import.
+    SyntaxError and all other exceptions propagate to the caller.
     """
-    ns: dict[str, Any] = {}
-    exec(compile(code, "<string>", "exec"), ns)
-    fns = [v for v in ns.values() if isinstance(v, types.FunctionType)]
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, prefix="_triton_"
+        ) as f:
+            f.write(code)
+            tmp_path = f.name
+        mod_name = f"_triton_{uuid.uuid4().hex}"
+        spec = importlib.util.spec_from_file_location(mod_name, tmp_path)
+        if spec is None:
+            raise ImportError(f"Could not create module spec for {tmp_path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[mod_name] = module
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    fns = [v for v in vars(module).values() if isinstance(v, types.FunctionType)]
     if not fns:
         raise ValueError("No callable wrapper function found in code")
     return fns[-1]
@@ -114,11 +147,11 @@ def _compute_stats(
     r = reference.detach().float()
 
     if tol.comparison == ComparisonMode.EXACT:
-        passed   = torch.equal(candidate, reference)
+        passed = torch.equal(candidate, reference)
         abs_diff = (c - r).abs()
         rel_diff = abs_diff / r.abs().clamp(min=1e-8)
         n_exceed = int((abs_diff > 0).sum().item())
-        total    = max(c.numel(), 1)
+        total = max(c.numel(), 1)
         return CorrectnessStats(
             max_abs_diff=float(abs_diff.max().item()),
             max_rel_diff=float(rel_diff.max().item()),
@@ -129,8 +162,12 @@ def _compute_stats(
 
     if tol.comparison == ComparisonMode.INF_AWARE_NUMERIC:
         inf_mismatch = int(
-            ((torch.isposinf(c) != torch.isposinf(r)) |
-             (torch.isneginf(c) != torch.isneginf(r))).sum().item()
+            (
+                (torch.isposinf(c) != torch.isposinf(r))
+                | (torch.isneginf(c) != torch.isneginf(r))
+            )
+            .sum()
+            .item()
         )
         nan_count = int((torch.isnan(c) | torch.isnan(r)).sum().item())
         bad = inf_mismatch + nan_count
@@ -151,9 +188,9 @@ def _compute_stats(
     # Standard numeric comparison
     abs_diff = (c - r).abs()
     rel_diff = abs_diff / r.abs().clamp(min=1e-8)
-    exceeds  = abs_diff > (tol.atol + tol.rtol * r.abs())
+    exceeds = abs_diff > (tol.atol + tol.rtol * r.abs())
     n_exceed = int(exceeds.sum().item())
-    total    = max(c.numel(), 1)
+    total = max(c.numel(), 1)
 
     return CorrectnessStats(
         max_abs_diff=float(abs_diff.max().item()) if abs_diff.numel() > 0 else 0.0,
@@ -174,7 +211,7 @@ def _time_fn(fn: types.FunctionType, inputs: list[torch.Tensor]) -> tuple[float,
             fn(*inputs)
 
     starts = [torch.cuda.Event(enable_timing=True) for _ in range(_TIMED_ITERS)]
-    ends   = [torch.cuda.Event(enable_timing=True) for _ in range(_TIMED_ITERS)]
+    ends = [torch.cuda.Event(enable_timing=True) for _ in range(_TIMED_ITERS)]
 
     torch.cuda.synchronize()
     with torch.no_grad():
@@ -192,18 +229,17 @@ def _time_fn(fn: types.FunctionType, inputs: list[torch.Tensor]) -> tuple[float,
 # Public API — called by server endpoints
 # ---------------------------------------------------------------------------
 
+
 def compile_check(triton_code: str) -> CompileResponse:
-    """Exec the Triton code and verify at least one wrapper function is defined."""
+    """Load the Triton code from a temp file and verify a wrapper function exists."""
     try:
-        ns: dict[str, Any] = {}
-        exec(compile(triton_code, "<string>", "exec"), ns)
-        fns = [v for v in ns.values() if isinstance(v, types.FunctionType)]
-        if not fns:
-            return CompileResponse(
-                status=CompileStatus.FAILED,
-                error_message="No callable wrapper function found in triton_code",
-            )
+        wrapper = _load_wrapper(triton_code)  # noqa: F841 — existence check only
         return CompileResponse(status=CompileStatus.SUCCESS)
+    except ValueError as e:
+        return CompileResponse(
+            status=CompileStatus.FAILED,
+            error_message=str(e),
+        )
     except SyntaxError as e:
         return CompileResponse(
             status=CompileStatus.FAILED,
@@ -226,8 +262,8 @@ def preflight(
     """Run eager vs Inductor sanity check on the PyTorch reference code."""
     try:
         torch_fn = _load_wrapper(pytorch_code)
-        tol      = get_tolerance(tolerance_policy)
-        inputs   = _make_inputs(input_shapes, input_dtypes, rng_seed)
+        tol = get_tolerance(tolerance_policy)
+        inputs = _make_inputs(input_shapes, input_dtypes, rng_seed)
 
         with torch.no_grad():
             eager_out = _to_flat_tensor(torch_fn(*inputs))
@@ -253,18 +289,18 @@ def run_verification(
 ) -> RunResponse:
     """Run Triton candidate against eager and Inductor, returning all 10 stats."""
     try:
-        torch_fn  = _load_wrapper(pytorch_code)
+        torch_fn = _load_wrapper(pytorch_code)
         triton_fn = _load_wrapper(triton_code)
-        tol       = get_tolerance(tolerance_policy)
-        inputs    = _make_inputs(input_shapes, input_dtypes, rng_seed)
+        tol = get_tolerance(tolerance_policy)
+        inputs = _make_inputs(input_shapes, input_dtypes, rng_seed)
 
         with torch.no_grad():
-            eager_out    = _to_flat_tensor(torch_fn(*inputs))
-            inductor_fn  = torch.compile(torch_fn, backend="inductor")
+            eager_out = _to_flat_tensor(torch_fn(*inputs))
+            inductor_fn = torch.compile(torch_fn, backend="inductor")
             inductor_out = _to_flat_tensor(inductor_fn(*inputs))
-            triton_out   = _to_flat_tensor(triton_fn(*inputs))
+            triton_out = _to_flat_tensor(triton_fn(*inputs))
 
-        stats_eager,    passed_eager    = _compute_stats(triton_out, eager_out,    tol)
+        stats_eager, passed_eager = _compute_stats(triton_out, eager_out, tol)
         stats_inductor, passed_inductor = _compute_stats(triton_out, inductor_out, tol)
 
         status = (
@@ -298,17 +334,17 @@ def run_benchmark(
     Returns median and stdev for all three. Inductor is compiled once before
     the warmup so compilation latency doesn't inflate timed results.
     """
-    torch_fn    = _load_wrapper(pytorch_code)
-    triton_fn   = _load_wrapper(triton_code)
-    inputs      = _make_inputs(input_shapes, input_dtypes, rng_seed)
+    torch_fn = _load_wrapper(pytorch_code)
+    triton_fn = _load_wrapper(triton_code)
+    inputs = _make_inputs(input_shapes, input_dtypes, rng_seed)
     inductor_fn = torch.compile(torch_fn, backend="inductor")
 
     # Trigger Inductor JIT compilation before the warmup loop
     with torch.no_grad():
         inductor_fn(*inputs)
 
-    triton_med,   triton_std   = _time_fn(triton_fn,   inputs)
-    eager_med,    eager_std    = _time_fn(torch_fn,    inputs)
+    triton_med, triton_std = _time_fn(triton_fn, inputs)
+    eager_med, eager_std = _time_fn(torch_fn, inputs)
     inductor_med, inductor_std = _time_fn(inductor_fn, inputs)
 
     return BenchmarkResponse(
