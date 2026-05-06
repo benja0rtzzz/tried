@@ -277,7 +277,7 @@
         "judge_ms": {
           "type": "integer",
           "minimum": 0,
-          "description": "Wall time of the Azure judge call."
+          "description": "Wall time of the OpenAI judge call."
         },
         "compile_ms": {
           "type": "integer",

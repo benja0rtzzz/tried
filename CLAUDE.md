@@ -12,12 +12,12 @@ The deliverable is a TUI application (VSCode extension as stretch) on top of a t
 
 Two machines, two roles:
 
-- **M4 MacBook Pro (48GB)** — Orchestrator: runs the agent loop, calls the local LLM via Ollama, HTTP-POSTs to the Lenovo verification server, calls the judge (Azure), manages retries, writes the dataset. Fine-tuning via MLX / mlx-lm.
+- **M4 MacBook Pro (48GB)** — Orchestrator: runs the agent loop, calls the local LLM via Ollama, HTTP-POSTs to the Lenovo verification server, calls the judge (OpenAI), manages retries, writes the dataset. Fine-tuning via MLX / mlx-lm.
 - **Lenovo LOQ (RTX 4060 8GB)** — Verification server: FastAPI service that accepts Triton + PyTorch code, compiles, executes, benchmarks, and returns structured results. Triton requires CUDA.
 
-Agent loop: PyTorch input → Orchestrator calls local LLM (Ollama) → Orchestrator HTTP-POSTs to Lenovo FastAPI (`/compile`, `/run`, `/benchmark`) → results returned → judge (Azure o4-mini) classifies outcome → retry up to N=5 → record every attempt.
+Agent loop: PyTorch input → Orchestrator calls local LLM (Ollama) → Orchestrator HTTP-POSTs to Lenovo FastAPI (`/compile`, `/run`, `/benchmark`) → results returned → judge (OpenAI o4-mini) classifies outcome → retry up to N=5 → record every attempt.
 
-The generator is a local LLM on the MacBook. The judge is Azure-hosted. **The judge never generates kernels, only classifies and advises.** Never conflate these roles.
+The generator is a local LLM on the MacBook. The judge is hosted by OpenAI. **The judge never generates kernels, only classifies and advises.** Never conflate these roles.
 
 See @docs/architecture.md for the full data flow and FastAPI contract.
 
@@ -88,10 +88,10 @@ Week 2 of an 8-week project. Full pipeline operational and ready for data collec
 
 - Schema, tolerance policy, held-out eval set locked.
 - Verification server complete: `/health`, `/preflight`, `/compile`, `/run`, `/benchmark`, `/jobs/{id}`. Smoke-tested on Lenovo (RTX 4060, CUDA + Inductor + CUDA-Event timing confirmed). `VERIFICATION_API_KEY` enforced at startup.
-- Orchestrator complete: agent loop, generator client (Ollama/qwen2.5-coder:14b), judge client (Gemini 2.5 Flash), dataset I/O, corpus loading.
+- Orchestrator complete: agent loop, generator client (Ollama/qwen2.5-coder:14b), judge client (OpenAI o4-mini, `reasoning_effort="high"`), dataset I/O, corpus loading.
 - `packages/tests` (`tried-tests`) holds the end-to-end smoke test (`tried_tests.smoke`).
 - Resume logic in `main.py`: on restart, already-completed and preflight-skipped examples are filtered out so no example is processed twice.
-- Gemini rate-limit handling: hitting a 429 stops the run cleanly; restart resumes from where it left off.
+- OpenAI rate-limit handling: hitting a 429 stops the run cleanly; restart resumes from where it left off once the rate-limit window clears (or credits are topped up).
 
 ## Docs knowledge base
 

@@ -10,8 +10,9 @@ Optional env vars:
 
 Resume behaviour: on startup, already-completed and preflight-skipped
 example_ids are loaded from dataset.jsonl / skipped.jsonl and filtered out so
-no example is processed twice. Hitting the Gemini daily quota stops the run
-cleanly with exit code 0; restart the process after the quota resets.
+no example is processed twice. Hitting an OpenAI rate limit stops the run
+cleanly with exit code 0; restart the process once the rate-limit window
+clears (or after topping up credits).
 """
 
 from __future__ import annotations
@@ -102,10 +103,10 @@ def main() -> None:
             outcome = run_job(record, client, data_dir)
         except RateLimitError as exc:
             completed = sum(outcome_counts.values())
-            _log.error("Gemini rate limit hit: %s", exc)
+            _log.error("OpenAI rate limit hit: %s", exc)
             _log.error(
                 "stopping cleanly — %d example(s) completed this run; "
-                "restart after the daily quota resets (midnight US/Pacific)",
+                "restart once the OpenAI rate-limit window clears or after topping up credits",
                 completed,
             )
             sys.exit(0)

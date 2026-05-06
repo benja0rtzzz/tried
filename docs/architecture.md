@@ -21,7 +21,7 @@ Orchestrator (MacBook)
     ├─ HTTP POST /benchmark ──► Lenovo FastAPI  (async — returns job_id)
     │       GET /jobs/{id}  ──► poll every 5s until done
     │       results ◄────────────────────────────────────
-    ├─ if wrong/slow: call Azure judge (o4-mini) → advice
+    ├─ if wrong/slow: call OpenAI judge (o4-mini) → advice
     └─ retry (max N=5), record every attempt
 ```
 

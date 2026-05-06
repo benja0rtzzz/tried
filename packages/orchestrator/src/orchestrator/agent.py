@@ -72,7 +72,7 @@ def run_job(
 
     Returns the FinalOutcome written to dataset.jsonl, or None if the preflight
     check failed (record written to skipped.jsonl instead).
-    Transport exceptions (server unreachable, Azure down) propagate to the
+    Transport exceptions (server unreachable, OpenAI down) propagate to the
     caller, which is responsible for writing to skipped.jsonl.
     """
     dataset_path = data_dir / "dataset.jsonl"
