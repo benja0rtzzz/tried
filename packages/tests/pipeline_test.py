@@ -350,7 +350,7 @@ class TestHardScenario:
         }
         assert row.final_winning_attempt_n == 2
 
-    def test_attempt_0_compile_failed(self):
+    def test_attempt_0_compile_status_failed(self):
         row = _read_row("hard")
         assert row.attempts[0].compile.status == CompileStatus.FAILED
         assert row.attempts[0].correctness is None

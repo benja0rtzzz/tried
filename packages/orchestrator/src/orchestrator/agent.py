@@ -221,6 +221,23 @@ def _select_policy(dtypes: list[Dtype], op_category: OpCategory) -> TolerancePol
     return TolerancePolicy.DEFAULT_FP16 if has_fp16 else TolerancePolicy.DEFAULT_FP32
 
 
+def _effective_compile(
+    compile_resp: CompileResponse,
+    run_resp: RunResponse | None,
+) -> tuple[CompileStatus, str | None]:
+    """Return the effective compile status and error for an attempt.
+
+    Triton JIT compilation is lazy — a kernel that passes the shallow Python
+    import check can still crash on first execution. When run_resp has no
+    vs_eager (exception before any tensor comparison), treat it as a compile
+    failure so the schema invariant holds:
+        correctness null iff compile.status == failed
+    """
+    if run_resp is not None and run_resp.vs_eager is None:
+        return CompileStatus.FAILED, run_resp.error_message
+    return compile_resp.status, compile_resp.error_message
+
+
 def _determine_outcome(attempts: list[Attempt]) -> tuple[FinalOutcome, int | None]:
     """Map the completed attempt list to a FinalOutcome and winning attempt index."""
     last = attempts[-1]
@@ -229,7 +246,7 @@ def _determine_outcome(attempts: list[Attempt]) -> tuple[FinalOutcome, int | Non
         return outcome, last.attempt_n
 
     if all(a.compile.status == CompileStatus.FAILED for a in attempts):
-        return FinalOutcome.COMPILE_FAILED, None
+        return FinalOutcome.ALL_ATTEMPTS_FAILED, None
 
     if all(
         a.correctness is not None and a.correctness.status == CorrectnessStatus.FAILED
@@ -255,6 +272,8 @@ def _build_attempt(
     policy: TolerancePolicy,
 ) -> Attempt:
     """Assemble an Attempt model from the raw results of one loop iteration."""
+    eff_compile_status, eff_compile_error = _effective_compile(compile_resp, run_resp)
+
     correctness: CorrectnessCheck | None = None
     if (
         run_resp is not None
@@ -287,8 +306,8 @@ def _build_attempt(
         prior_advice_applied=prior_advice,
         triton_code=gen.triton_code,
         compile=CompileResult(
-            status=compile_resp.status,
-            error=compile_resp.error_message,
+            status=eff_compile_status,
+            error=eff_compile_error,
         ),
         correctness=correctness,
         benchmark=benchmark,
@@ -334,11 +353,12 @@ def _results_to_context(
     benchmark_resp: BenchmarkResponse | None,
 ) -> AttemptContext:
     """Build an AttemptContext from the raw results of the current in-flight attempt."""
+    eff_status, eff_error = _effective_compile(compile_resp, run_resp)
     return AttemptContext(
         attempt_n=attempt_n,
         triton_code=gen.triton_code,
-        compile_status=compile_resp.status.value,
-        compile_error=compile_resp.error_message,
+        compile_status=eff_status.value,
+        compile_error=eff_error,
         correctness_status=(
             run_resp.correctness_status.value
             if run_resp and run_resp.correctness_status else None

@@ -29,7 +29,7 @@
     "final_winning_attempt_n": {
       "type": ["integer", "null"],
       "minimum": 0,
-      "description": "The attempt_n whose result is recorded in final_outcome. Null iff final_outcome is in {compile_failed, correctness_failed, all_attempts_failed}."
+      "description": "The attempt_n whose result is recorded in final_outcome. Null iff final_outcome is in {correctness_failed, all_attempts_failed}."
     }
   },
   "$defs": {
@@ -354,7 +354,6 @@
     "final_outcome": {
       "type": "string",
       "enum": [
-        "compile_failed",
         "correctness_failed",
         "compiled_correct_slow",
         "compiled_correct_parity",

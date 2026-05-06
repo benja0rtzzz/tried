@@ -196,7 +196,6 @@ class DatasetRow(BaseModel):
     @model_validator(mode="after")
     def _winning_attempt_consistent_with_outcome(self) -> DatasetRow:
         terminal_without_winner = {
-            FinalOutcome.COMPILE_FAILED,
             FinalOutcome.CORRECTNESS_FAILED,
             FinalOutcome.ALL_ATTEMPTS_FAILED,
         }

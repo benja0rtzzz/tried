@@ -56,7 +56,6 @@ class Difficulty(str, Enum):
 
 
 class FinalOutcome(str, Enum):
-    COMPILE_FAILED                        = "compile_failed"
     CORRECTNESS_FAILED                    = "correctness_failed"
     COMPILED_CORRECT_SLOW                 = "compiled_correct_slow"
     COMPILED_CORRECT_PARITY               = "compiled_correct_parity"
