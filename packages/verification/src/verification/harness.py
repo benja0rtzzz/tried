@@ -146,6 +146,17 @@ def _compute_stats(
     c = candidate.detach().float()
     r = reference.detach().float()
 
+    nan_count = int(torch.isnan(c).sum().item())
+    if nan_count > 0:
+        total = max(c.numel(), 1)
+        return CorrectnessStats(
+            max_abs_diff=math.inf,
+            max_rel_diff=math.inf,
+            mean_abs_diff=math.inf,
+            n_elements_exceeding_tol=nan_count,
+            pct_elements_exceeding_tol=100.0 * nan_count / total,
+        ), False
+
     if tol.comparison == ComparisonMode.EXACT:
         passed = torch.equal(candidate, reference)
         abs_diff = (c - r).abs()
