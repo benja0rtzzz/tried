@@ -9,6 +9,7 @@ Launch: CUDA_VISIBLE_DEVICES=0 uv run uvicorn verification.server:app --host 0.0
 from __future__ import annotations
 
 import multiprocessing as mp
+from multiprocessing.pool import Pool as MpPool
 import os
 import threading
 import uuid
@@ -75,8 +76,8 @@ _jobs_lock = threading.Lock()
 
 # Persistent subprocess for CUDA isolation. Spawned once; respawned automatically
 # after a CUDA crash. spawn context required — CUDA contexts are not fork-safe.
-_mp_ctx = mp.get_context("spawn")
-_worker: MpPool | None = None
+_mp_ctx      = mp.get_context("spawn")
+_worker:     MpPool | None = None
 _worker_lock = threading.Lock()
 
 
