@@ -5,12 +5,14 @@ requires-python = ">=3.11"
 dependencies = [
     "tried-orchestrator",
     "tried-shared",
+    "tried-stats",
     "tried-tests",
 ]
 
 [tool.uv.sources]
 tried-orchestrator = { workspace = true }
 tried-shared = { workspace = true }
+tried-stats = { workspace = true }
 tried-tests = { workspace = true }
 
 [tool.uv.workspace]
