@@ -8,6 +8,7 @@ Launch: CUDA_VISIBLE_DEVICES=0 uv run uvicorn verification.server:app --host 0.0
 from __future__ import annotations
 
 import multiprocessing as mp
+from multiprocessing.pool import Pool as MpPool
 import os
 import threading
 import uuid
@@ -20,6 +21,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from shared.enums import CorrectnessStatus
 from shared.logging import get_logger
 from shared.verification.api import (
     BenchmarkRequest,
@@ -29,7 +31,9 @@ from shared.verification.api import (
     JobStatus,
     JobStatusValue,
     PreflightRequest,
+    PreflightResponse,
     RunRequest,
+    RunResponse,
 )
 
 from verification.harness import (
@@ -46,6 +50,11 @@ app = FastAPI(title="tried-verification")
 _API_KEY: str = os.environ.get("VERIFICATION_API_KEY", "")
 if not _API_KEY:
     raise RuntimeError("VERIFICATION_API_KEY environment variable is not set")
+
+# Server-side cap on how long a single GPU task may run in the worker subprocess.
+# Must exceed the orchestrator's VERIFICATION_INDUCTOR_TIMEOUT_S (default 300 s) so
+# the server can return an error response before the HTTP connection drops.
+_WORKER_TIMEOUT = float(os.getenv("VERIFICATION_WORKER_TIMEOUT_S", "480"))
 
 
 class _HealthResponse(BaseModel):
@@ -66,11 +75,11 @@ _jobs_lock   = threading.Lock()
 # Persistent subprocess for CUDA isolation. Spawned once; respawned automatically
 # after a CUDA crash. spawn context required — CUDA contexts are not fork-safe.
 _mp_ctx      = mp.get_context("spawn")
-_worker:     mp.pool.Pool | None = None
+_worker:     MpPool | None = None
 _worker_lock = threading.Lock()
 
 
-def _get_worker() -> mp.pool.Pool:
+def _get_worker() -> MpPool:
     global _worker
     with _worker_lock:
         if _worker is None:
@@ -81,19 +90,29 @@ def _get_worker() -> mp.pool.Pool:
 def _isolated(fn, **kwargs):
     """Call fn(**kwargs) in the persistent worker subprocess.
 
-    If the worker died (CUDA context poisoned), terminates it and respawns
-    before retrying once. The retry uses a fresh CUDA context.
+    Terminates and respawns the worker on ProcessError (CUDA crash) or timeout.
+    On timeout, raises TimeoutError without retrying — the GPU state is unknown.
+    On ProcessError, respawns and retries once with a fresh CUDA context.
     """
     global _worker
     try:
-        return _get_worker().apply(fn, kwds=kwargs)
+        return _get_worker().apply_async(fn, kwds=kwargs).get(timeout=_WORKER_TIMEOUT)
+    except mp.TimeoutError:
+        _log.error("worker timed out after %.0fs; terminating and respawning", _WORKER_TIMEOUT)
+        with _worker_lock:
+            if _worker is not None:
+                _worker.terminate()
+                _worker.join()
+                _worker = None
+        raise TimeoutError(f"GPU task timed out after {_WORKER_TIMEOUT:.0f}s")
     except mp.ProcessError:
         _log.warning("worker process died; respawning")
         with _worker_lock:
             if _worker is not None:
                 _worker.terminate()
+                _worker.join()
                 _worker = None
-        return _get_worker().apply(fn, kwds=kwargs)
+        return _get_worker().apply_async(fn, kwds=kwargs).get(timeout=_WORKER_TIMEOUT)
 
 
 @app.middleware("http")
@@ -129,42 +148,51 @@ async def health_endpoint():
 
 
 @app.post("/preflight")
-async def preflight_endpoint(req: PreflightRequest):
+def preflight_endpoint(req: PreflightRequest):
     _log.info(
         "preflight  shapes=%s  policy=%s",
         req.input_shapes, req.tolerance_policy.value,
     )
-    return _isolated(
-        preflight,
-        pytorch_code=req.pytorch_code,
-        input_shapes=req.input_shapes,
-        input_dtypes=req.input_dtypes,
-        rng_seed=req.rng_seed,
-        tolerance_policy=req.tolerance_policy,
-    )
+    try:
+        return _isolated(
+            preflight,
+            pytorch_code=req.pytorch_code,
+            input_shapes=req.input_shapes,
+            input_dtypes=req.input_dtypes,
+            rng_seed=req.rng_seed,
+            tolerance_policy=req.tolerance_policy,
+        )
+    except TimeoutError as e:
+        return PreflightResponse(passed=False, error_message=str(e))
 
 
 @app.post("/compile")
-async def compile_endpoint(req: CompileRequest):
+def compile_endpoint(req: CompileRequest):
     _log.info("compile")
     return compile_check(req.triton_code)
 
 
 @app.post("/run")
-async def run_endpoint(req: RunRequest):
+def run_endpoint(req: RunRequest):
     _log.info(
         "run  shapes=%s  policy=%s",
         req.input_shapes, req.tolerance_policy.value,
     )
-    return _isolated(
-        run_verification,
-        triton_code=req.triton_code,
-        pytorch_code=req.pytorch_code,
-        input_shapes=req.input_shapes,
-        input_dtypes=req.input_dtypes,
-        rng_seed=req.rng_seed,
-        tolerance_policy=req.tolerance_policy,
-    )
+    try:
+        return _isolated(
+            run_verification,
+            triton_code=req.triton_code,
+            pytorch_code=req.pytorch_code,
+            input_shapes=req.input_shapes,
+            input_dtypes=req.input_dtypes,
+            rng_seed=req.rng_seed,
+            tolerance_policy=req.tolerance_policy,
+        )
+    except TimeoutError as e:
+        return RunResponse(
+            correctness_status=CorrectnessStatus.FAILED,
+            error_message=str(e),
+        )
 
 
 @app.post("/benchmark", status_code=202)
@@ -221,4 +249,5 @@ async def _shutdown_worker():
     with _worker_lock:
         if _worker is not None:
             _worker.terminate()
+            _worker.join()
             _worker = None
