@@ -17,22 +17,30 @@ def build_user_prompt(
     pytorch_code: str,
     input_shapes: list[list[int]],
     input_dtypes: list[str],
+    prior_code: str | None = None,
     prior_advice: str | None = None,
 ) -> str:
     """
     Render the user message for a generation request.
 
-    prior_advice is the judge's fix_suggestion from the previous attempt.
-    Pass None (or omit) on attempt 0.
+    prior_code is the Triton code produced by the previous attempt.
+    prior_advice is the judge's fix_suggestion for that attempt.
+    Both are None on attempt 0 and passed together on retries.
     """
-    advice_section = (
-        f"The previous attempt failed. Fix advice:\n{prior_advice}\n"
-        if prior_advice
-        else ""
-    )
+    if prior_code and prior_advice:
+        prior_section = (
+            "\nThe previous attempt produced this Triton code:\n"
+            f"```python\n{prior_code}\n```\n\n"
+            "It failed. Apply the following fix to that code, preserving the "
+            "parts that were already correct — do not rewrite from scratch:\n"
+            f"{prior_advice}\n"
+        )
+    else:
+        prior_section = ""
+
     return _USER_TEMPLATE.format(
         pytorch_code=pytorch_code,
         input_shapes=", ".join(str(s) for s in input_shapes),
         input_dtypes=", ".join(input_dtypes),
-        prior_advice_section=advice_section,
+        prior_attempt_section=prior_section,
     )

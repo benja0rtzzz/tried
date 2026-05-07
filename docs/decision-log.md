@@ -4,6 +4,16 @@ Lightweight record of non-obvious decisions. Full reasoning lives in the Claude 
 All entrees here are accepted.
 ---
 
+## 2026-05-06 — Generator now sees its prior Triton code on retry
+
+Prior to this change the generator received only the judge's natural-language fix advice between attempts; its own previous Triton code was discarded. A 13-row test run produced 12 `all_attempts_failed` outcomes with a clear cyclic pattern: each attempt would apply the latest advice but silently regress an earlier fix because the model had no working memory of the kernel state it was editing. Example trace (`47f75bb3...`, gelu+residual): int64 offsets → fix int32 cast → drop BLOCK_SIZE constexpr → restore BLOCK_SIZE but use invalid `tl.arange(dtype=...)` → drop `dtype` and BLOCK_SIZE again → back to the original int64 error.
+
+The retry loop is meant to model the human-in-the-loop workflow this project automates (developer reads compile error → asks AI for advice → applies a *targeted edit* to the existing kernel), so producing a fine-tuning dataset from "advice → fresh attempt" pairs trains a different (and less useful) skill than what the deployed agent will need. The generator now receives the previous attempt's `triton_code` alongside `prior_advice`, with the prompt instructing it to apply the fix while preserving the parts that were already correct — not rewrite from scratch. This invalidates the existing 13-row dataset.jsonl, which is being scrapped before the official run starts. Locked-prompt status is preserved going forward; team agreed to the change pre-flight.
+
+Implementation: `prompts/generator/generator_user.txt` (`{prior_advice_section}` → `{prior_attempt_section}`), `prompts/generator/__init__.py` (new `prior_code` parameter), `clients/generator_client.py` (forwards `prior_code`), `agent.py` (tracks `prior_code = gen.triton_code` across the retry loop).
+
+---
+
 ## 2026-05-06 — Judge switched from Gemini 2.5 Flash to OpenAI o4-mini
 
 Gemini 2.5 Flash was not producing useful fix suggestions — it classified most Triton JIT failures as `other` or repeated generic advice across retries. Root cause is model capability, not prompt design; expanding the prompt with error examples would paper over a reasoning gap rather than fix it.

@@ -5,5 +5,5 @@ PyTorch function:
 
 Input shapes: {input_shapes}
 Input dtypes: {input_dtypes}
-{prior_advice_section}
+{prior_attempt_section}
 Output only the Python code.

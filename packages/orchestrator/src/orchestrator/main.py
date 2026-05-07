@@ -23,7 +23,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from shared.dataset import append_skipped, load_corpus_train, load_dataset
+from pydantic import ValidationError
+from shared.dataset import load_corpus_train, load_dataset
 from shared.enums import FinalOutcome, Split
 from shared.logging import get_logger
 
@@ -82,7 +83,9 @@ def main() -> None:
     # --- Resume filter ---
     already_done = _load_completed_ids(dataset_path) | _load_skipped_ids(skipped_path)
     if already_done:
-        _log.info("resuming: %d example(s) already processed — skipping", len(already_done))
+        _log.info(
+            "resuming: %d example(s) already processed — skipping", len(already_done)
+        )
     records = [r for r in records if r.example_id not in already_done]
     _log.info("%d record(s) remaining", len(records))
 
@@ -110,17 +113,22 @@ def main() -> None:
                 completed,
             )
             sys.exit(0)
-        except Exception as exc:
+        except ValidationError as exc:
             _log.error(
-                "transport error  example_id=%s  %s: %s",
+                "data validation error  example_id=%s  %s: %s — skipping without recording; "
+                "fix the underlying bug then restart to retry this example",
                 record.example_id,
                 type(exc).__name__,
                 exc,
             )
-            append_skipped(
-                skipped_path,
+            transport_errors += 1
+            continue
+        except Exception as exc:
+            _log.error(
+                "transport error  example_id=%s  %s: %s — will retry on restart",
                 record.example_id,
-                f"{type(exc).__name__}: {exc}",
+                type(exc).__name__,
+                exc,
             )
             transport_errors += 1
             continue

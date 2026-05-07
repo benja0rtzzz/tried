@@ -97,6 +97,7 @@ def run_job(
 
     # --- Retry loop ---
     attempts: list[Attempt] = []
+    prior_code: str | None = None
     prior_advice: str | None = None
 
     for attempt_n in range(MAX_ATTEMPTS):
@@ -110,6 +111,7 @@ def run_job(
             pytorch_code=record.pytorch_code,
             input_shapes=record.input_shapes,
             input_dtypes=[d.value for d in record.input_dtypes],
+            prior_code=prior_code,
             prior_advice=prior_advice,
         )
 
@@ -167,10 +169,13 @@ def run_job(
             "attempt %d  classification=%s  example_id=%s",
             attempt_n, judge_result.classification.value, record.example_id,
         )
+        if judge_result.fix_suggestion is not None:
+            _log.info("judge advice: %s", judge_result.fix_suggestion)
 
         if judge_result.classification in _SUCCESS_MAP:
             break
 
+        prior_code = gen.triton_code
         prior_advice = judge_result.fix_suggestion
 
     final_outcome, winning_n = _determine_outcome(attempts)

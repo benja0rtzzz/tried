@@ -26,14 +26,18 @@ def generate(
     pytorch_code: str,
     input_shapes: list[list[int]],
     input_dtypes: list[str],
+    prior_code: str | None = None,
     prior_advice: str | None = None,
 ) -> GeneratorResult:
     """Call the local LLM and return the generated Triton code with metadata.
 
-    prior_advice is the judge's fix_suggestion from the previous attempt.
-    Pass None (or omit) on attempt 0.
+    prior_code is the Triton code produced by the previous attempt.
+    prior_advice is the judge's fix_suggestion for that attempt.
+    Both are None on attempt 0 and passed together on retries.
     """
-    user_msg = build_user_prompt(pytorch_code, input_shapes, input_dtypes, prior_advice)
+    user_msg = build_user_prompt(
+        pytorch_code, input_shapes, input_dtypes, prior_code, prior_advice
+    )
 
     t0 = time.monotonic()
     response = ollama.chat(
