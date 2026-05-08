@@ -73,9 +73,10 @@ def _attribute_path(node: ast.AST) -> str | None:
 
 
 def _validate_imports(module: ast.Module) -> ValidationResult:
-    """Walk module-level statements; only `import torch` and a function
-    def are allowed."""
+    """Walk module-level statements; require exactly `import torch` and
+    one function def."""
     func_seen = False
+    torch_import_seen = False
     for node in module.body:
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -85,6 +86,7 @@ def _validate_imports(module: ast.Module) -> ValidationResult:
                         f"{f' as {alias.asname}' if alias.asname else ''}",
                         where=f"line {node.lineno}",
                     )
+                torch_import_seen = True
         elif isinstance(node, ast.FunctionDef):
             if func_seen:
                 return ValidationResult.fail(
@@ -103,6 +105,8 @@ def _validate_imports(module: ast.Module) -> ValidationResult:
                 f"forbidden module-level statement: {type(node).__name__}",
                 where=f"line {node.lineno}",
             )
+    if not torch_import_seen:
+        return ValidationResult.fail("missing required `import torch` at module level")
     if not func_seen:
         return ValidationResult.fail("no function definition")
     return _OK
@@ -152,11 +156,19 @@ def _walk_body_collect_ops(func: ast.FunctionDef) -> tuple[list[str], Validation
 
         def visit_UnaryOp(self, node: ast.UnaryOp) -> None:
             nonlocal failure
-            if failure is None and not isinstance(node.op, ast.Not):
-                failure = ValidationResult.fail(
-                    f"operator-form unary op ({type(node.op).__name__}); use function-form",
-                    where=f"line {node.lineno}",
-                )
+            if failure is not None or isinstance(node.op, ast.Not):
+                self.generic_visit(node)
+                return
+            # Allow USub / UAdd on numeric literals (e.g. dim=-1, scale=-0.5).
+            # Reject when operand isn't a literal — that's the tensor case.
+            if (isinstance(node.op, (ast.USub, ast.UAdd))
+                    and isinstance(node.operand, ast.Constant)
+                    and isinstance(node.operand.value, (int, float))):
+                return
+            failure = ValidationResult.fail(
+                f"operator-form unary op ({type(node.op).__name__}) on non-literal operand; use function-form",
+                where=f"line {node.lineno}",
+            )
 
         def visit_For(self, node: ast.For) -> None:
             nonlocal failure

@@ -50,7 +50,7 @@ You are translating a fully-determined fusion spec into a single PyTorch functio
 
 # Hard rules
 
-- No imports beyond `import torch`.
+- The module must begin with exactly `import torch` on line 1, followed by a blank line, then exactly one function definition. No other imports, no aliases.
 - No control flow (if / for / while), no comprehensions, no lambdas, no nested function definitions.
 - Function-form binary and unary ops only: write `torch.add(x, y)`, never `x + y` or `-x`.
 - No tensor methods that change device or dtype: no `.to()`, `.cuda()`, `.cpu()`, `.type()`, `.type_as()`.
