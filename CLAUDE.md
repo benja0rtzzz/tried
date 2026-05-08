@@ -51,7 +51,8 @@ tried/
 
 These files encode experimental invariants. Editing them mid-experiment invalidates comparisons between runs. They are set once, before data collection, in agreement with the full team.
 
-- `docs/schema.md`, `packages/shared/src/shared/schema/dataset_record.json`, and `packages/shared/src/shared/schema/eval_and_training.json` — dataset and corpus schemas
+- `docs/schema.md`, `packages/shared/src/shared/schema/dataset/dataset_record.json`, and `packages/shared/src/shared/schema/dataset/eval_and_training.json` — dataset and corpus schemas
+- `packages/shared/src/shared/schema/eval/spec.json`, `packages/shared/src/shared/schema/eval/corpus_record.json`, and `packages/shared/src/shared/schema/eval/record.json` — eval schemas
 - `docs/tolerance-policy.md` and `packages/shared/src/shared/verification/tolerance.py`
 - `eval/holdout/` — the evaluation set (never touch programmatically)
 
@@ -96,7 +97,7 @@ Week 2 of an 8-week project. Full pipeline operational and ready for data collec
 ## Docs knowledge base
 
 - @docs/architecture.md — two-machine data flow, FastAPI endpoint contract
-- @docs/schema.md — human-readable schema explanation (machine specs: `packages/shared/src/shared/schema/dataset_record.json` and `packages/shared/src/shared/schema/eval_and_training.json`)
+- @docs/schema.md — human-readable schema explanation (machine specs: `packages/shared/src/shared/schema/dataset/` for dataset/training and `packages/shared/src/shared/schema/eval/` for eval)
 - @docs/benchmarking-protocol.md — verification steps, timing rules, hardware pinning
 - @docs/tolerance-policy.md — tolerance values and rationale
 - @docs/model-choices.md — generator/judge selection rationale, bakeoff results
@@ -104,3 +105,4 @@ Week 2 of an 8-week project. Full pipeline operational and ready for data collec
 - @docs/dev-setup-lenovo.md — Lenovo environment setup (UV, CUDA, Triton, uvicorn)
 - @docs/decision-log.md — ADR-lite log of key decisions
 - @docs/corpus.md — corpus plan, train/eval split, extraction rules
+- @docs/eval-stats.md — eval analyses, schema-need split, stats package layout

@@ -1,0 +1,331 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tried.local/schemas/eval-record.json",
+  "title": "TRIED Eval Record",
+  "description": "Per-example result of one eval run on one accepted eval-set row. Eval-specific bookkeeping: model_label and run_id identify the condition, embedded EvalSpec makes the row self-contained for analysis, baseline_compile carries cold compile times for the eager/Inductor baselines, and each attempt's benchmark block carries the full 100-iter timing arrays needed for non-parametric paired tests (Wilcoxon signed-rank, bootstrap CIs) and IQR/quartile descriptive stats. The agent loop that produces these records is identical to dataset collection (same prompt, same retry budget N=5, same judge, same tolerance) — only the input set and output destination differ.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "example_id",
+    "model_label",
+    "run_id",
+    "spec",
+    "attempts",
+    "final_outcome",
+    "final_winning_attempt_n",
+    "baseline_compile"
+  ],
+  "properties": {
+    "example_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Matches EvalCorpusRecord.example_id. Joining key for paired McNemar / Wilcoxon tests across two model_labels."
+    },
+    "model_label": {
+      "type": "string",
+      "description": "Identifies the generator condition for this row. Examples: 'qwen2.5-coder:14b-vanilla', 'qwen2.5-coder:14b-ft-v1'. The same model_label may appear across multiple run_ids if the eval is re-run; analysis tools should aggregate by (model_label, run_id) and pick the run_id explicitly."
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "UUID for this whole eval run. All EvalRecords produced in one orchestrator invocation share the same run_id."
+    },
+    "spec": {
+      "$ref": "spec.json",
+      "description": "Embedded EvalSpec. Recorded alongside the result so each row in eval/results/<model_label>/eval_rows.jsonl is self-contained for analysis (no join against eval/holdout/ required)."
+    },
+    "attempts": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/eval_attempt" },
+      "description": "Ordered list of generator-compile-run-judge cycles. Index in the array equals attempt_n. Same shape as DatasetRow.attempts but with raw 100-iter timing arrays embedded in the benchmark block."
+    },
+    "final_outcome": {
+      "type": "string",
+      "enum": [
+        "correctness_failed",
+        "compiled_correct_slow",
+        "compiled_correct_parity",
+        "compiled_correct_faster_than_inductor",
+        "all_attempts_failed"
+      ],
+      "description": "Terminal state for the example. Same closed vocabulary as DatasetRow.final_outcome."
+    },
+    "final_winning_attempt_n": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "The attempt_n whose result is recorded in final_outcome. Null iff final_outcome is in {correctness_failed, all_attempts_failed}."
+    },
+    "baseline_compile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eager_first_call_ms", "inductor_first_call_ms"],
+      "properties": {
+        "eager_first_call_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Wall time of the first eager invocation of pytorch_code on this run, in milliseconds. Includes CUDA context init effects on the first row of a run; subsequent rows see only kernel-launch overhead."
+        },
+        "inductor_first_call_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Wall time of the first torch.compile(backend='inductor') invocation on this run, in milliseconds. Dominated by Inductor cold-compile (typically 60–120 s). This is the headline 'compile cost' number for the experiment."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "eval_attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One generator-compile-(run-benchmark)-judge cycle. Same shape as DatasetRow.attempts.item — intentionally, because the agent loop is identical — except the benchmark block embeds raw 100-iter timing arrays.",
+      "required": [
+        "attempt_n",
+        "prior_advice_applied",
+        "triton_code",
+        "compile",
+        "correctness",
+        "benchmark",
+        "judge_classification",
+        "judge_fix_suggestion",
+        "latency",
+        "tokens",
+        "timestamp"
+      ],
+      "properties": {
+        "attempt_n": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Zero-indexed position in the attempts array. Must equal the array index."
+        },
+        "prior_advice_applied": {
+          "type": ["string", "null"],
+          "description": "The judge_fix_suggestion from attempt_n - 1 that this attempt acted on. Null on attempt_n == 0 or if the previous attempt yielded no suggestion."
+        },
+        "triton_code": {
+          "type": "string",
+          "description": "The Triton kernel source produced by the generator. Shipped to the verification server as-is."
+        },
+        "compile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "error"],
+          "properties": {
+            "status": { "type": "string", "enum": ["success", "failed"] },
+            "error": {
+              "type": ["string", "null"],
+              "description": "Captured compiler error text. Null iff status == 'success'."
+            }
+          }
+        },
+        "correctness": {
+          "anyOf": [
+            { "$ref": "#/$defs/correctness_check" },
+            { "type": "null" }
+          ],
+          "description": "Numeric agreement between candidate Triton output and reference outputs. Null iff compile.status == 'failed'."
+        },
+        "benchmark": {
+          "anyOf": [
+            { "$ref": "#/$defs/eval_benchmark" },
+            { "type": "null" }
+          ],
+          "description": "Timing measurements, speedups, and raw 100-iter samples. Null iff correctness is null or correctness.status == 'failed'."
+        },
+        "judge_classification": {
+          "type": "string",
+          "enum": [
+            "shape_mismatch",
+            "dtype_mismatch",
+            "indexing_error",
+            "triton_api_error",
+            "correctness_failed_numeric",
+            "correct_but_slower_than_inductor",
+            "correct_and_competitive",
+            "correct_and_faster",
+            "other"
+          ],
+          "description": "Judge's classification of an attempt's outcome. Same closed vocabulary as DatasetRow.attempts.item.judge_classification."
+        },
+        "judge_fix_suggestion": {
+          "type": ["string", "null"],
+          "description": "Natural-language advice from the judge for the next attempt. Null when no further retry will happen or the judge declined to advise."
+        },
+        "latency": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["generator_ms", "judge_ms", "compile_ms", "run_ms"],
+          "properties": {
+            "generator_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Wall time of the Ollama call that produced triton_code, in milliseconds."
+            },
+            "judge_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Wall time of the OpenAI judge call, in milliseconds."
+            },
+            "compile_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Wall time of POST /compile on the verification server, in milliseconds. Captures Triton compile cost."
+            },
+            "run_ms": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Wall time of POST /run on the verification server, in milliseconds. Null if not reached (compile failed)."
+            }
+          }
+        },
+        "tokens": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["generator_prompt", "generator_completion", "judge_prompt", "judge_completion"],
+          "properties": {
+            "generator_prompt": { "type": "integer", "minimum": 0 },
+            "generator_completion": { "type": "integer", "minimum": 0 },
+            "judge_prompt": { "type": "integer", "minimum": 0 },
+            "judge_completion": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 UTC timestamp when this attempt started (generator call kicked off)."
+        }
+      }
+    },
+    "correctness_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Candidate-vs-eager (primary) and candidate-vs-Inductor (secondary) agreement. All 10 numbers recorded per benchmarking-protocol step 5. Same shape as DatasetRow.attempts.item.correctness.",
+      "required": ["status", "tolerance_policy_used", "vs_eager", "vs_inductor"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["passed", "failed"],
+          "description": "'passed' iff vs_eager is within the tolerance_policy_used."
+        },
+        "tolerance_policy_used": {
+          "type": "string",
+          "enum": [
+            "default_fp32",
+            "default_fp16",
+            "reduction_fp32",
+            "reduction_fp16",
+            "exact_integer",
+            "masked_logits",
+            "attention_softmax_fp16",
+            "recurrent_scan_fp16",
+            "low_precision_dequant",
+            "fp8_cast"
+          ],
+          "description": "Key into packages/shared/src/shared/verification/tolerance.py — the source of truth for atol/rtol values and comparison semantics."
+        },
+        "vs_eager": { "$ref": "#/$defs/correctness_stats" },
+        "vs_inductor": { "$ref": "#/$defs/correctness_stats" }
+      }
+    },
+    "correctness_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Five-number numeric agreement summary. Same shape as DatasetRow.attempts.item.correctness.vs_eager.",
+      "required": [
+        "max_abs_diff",
+        "max_rel_diff",
+        "mean_abs_diff",
+        "n_elements_exceeding_tol",
+        "pct_elements_exceeding_tol"
+      ],
+      "properties": {
+        "max_abs_diff": { "type": "number", "minimum": 0 },
+        "max_rel_diff": { "type": "number", "minimum": 0 },
+        "mean_abs_diff": { "type": "number", "minimum": 0 },
+        "n_elements_exceeding_tol": { "type": "integer", "minimum": 0 },
+        "pct_elements_exceeding_tol": { "type": "number", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "eval_benchmark": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Timing results per benchmarking-protocol.md (10 warmup + 100 timed runs, CUDA event timing, synced start/end, median reported) PLUS raw 100-iter sample arrays for downstream non-parametric stats. The median + std fields mirror DatasetRow.attempts.item.benchmark for cross-comparability with training data; the *_samples_ms arrays are the eval-only addition.",
+      "required": [
+        "triton_ms",
+        "eager_ms",
+        "inductor_ms",
+        "speedup_vs_eager",
+        "speedup_vs_inductor",
+        "triton_std_ms",
+        "eager_std_ms",
+        "inductor_std_ms",
+        "triton_samples_ms",
+        "eager_samples_ms",
+        "inductor_samples_ms"
+      ],
+      "properties": {
+        "triton_ms": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Median wall time of the candidate Triton kernel, in milliseconds."
+        },
+        "eager_ms": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Median wall time of PyTorch eager, in milliseconds."
+        },
+        "inductor_ms": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Median wall time of torch.compile + Inductor, in milliseconds."
+        },
+        "speedup_vs_eager": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "eager_ms / triton_ms. >1.0 means Triton is faster than eager."
+        },
+        "speedup_vs_inductor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "inductor_ms / triton_ms. >1.0 means Triton is faster than Inductor."
+        },
+        "triton_std_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Standard deviation of the 100 Triton timing runs, in milliseconds."
+        },
+        "eager_std_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Standard deviation of the 100 eager timing runs, in milliseconds."
+        },
+        "inductor_std_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Standard deviation of the 100 Inductor timing runs, in milliseconds."
+        },
+        "triton_samples_ms": {
+          "type": "array",
+          "minItems": 100,
+          "maxItems": 100,
+          "items": { "type": "number", "exclusiveMinimum": 0 },
+          "description": "All 100 timed-iteration measurements for the candidate Triton kernel, in milliseconds. Required for paired non-parametric tests (Wilcoxon signed-rank), bootstrap CIs on speedup ratios, and IQR-based outlier detection from week-2 of the stats course."
+        },
+        "eager_samples_ms": {
+          "type": "array",
+          "minItems": 100,
+          "maxItems": 100,
+          "items": { "type": "number", "exclusiveMinimum": 0 },
+          "description": "All 100 timed-iteration measurements for PyTorch eager, in milliseconds."
+        },
+        "inductor_samples_ms": {
+          "type": "array",
+          "minItems": 100,
+          "maxItems": 100,
+          "items": { "type": "number", "exclusiveMinimum": 0 },
+          "description": "All 100 timed-iteration measurements for torch.compile + Inductor, in milliseconds."
+        }
+      }
+    }
+  }
+}

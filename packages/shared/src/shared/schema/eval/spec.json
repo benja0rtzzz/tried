@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tried.local/schemas/eval-spec.json",
+  "title": "TRIED Eval Spec",
+  "description": "Fully-determined spec for one eval-set candidate. Produced by the stage-1 sampler before any LLM call. Every semantically load-bearing decision (op set, shapes, dtypes, tolerance, seed) is fixed here so the LLM in stage 2 only fills in code. AST guardrails in stage 3 verify the produced pytorch_code matches this spec; /preflight in stage 4 verifies the function actually runs and agrees eager-vs-Inductor under the spec's tolerance_policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "spec_id",
+    "tier",
+    "form",
+    "ops",
+    "input_shapes",
+    "input_dtypes",
+    "expected_output_shape",
+    "expected_output_dtype",
+    "tolerance_policy",
+    "rng_seed",
+    "form_metadata"
+  ],
+  "properties": {
+    "spec_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Deterministic UUIDv5 derived from (form, ops, input_shapes, input_dtypes, rng_seed, form_metadata). Stable across re-runs of the sampler so accepted/rejected status is joinable across iterations."
+    },
+    "tier": {
+      "type": "string",
+      "enum": ["Easy", "Medium", "Hard"],
+      "description": "Difficulty tier. Determines target n in the eval split (105 / 115 / 80) and downstream stratified reporting. Top-level (not derived from form) so stratification is direct without joining against the forms registry."
+    },
+    "form": {
+      "type": "string",
+      "enum": [
+        "chain_2_unary",
+        "unary_then_residual",
+        "chain_3_unary",
+        "unary_then_reduction",
+        "softmax_then_unary",
+        "unary_then_norm",
+        "attention_qkv",
+        "fused_linear_norm_activation",
+        "gated_mlp_swiglu",
+        "chain_4_unary",
+        "embedding_then_norm"
+      ],
+      "description": "Closed vocabulary of fusion shapes. Tier-restricted: each form belongs to exactly one tier, enforced by the stage-1 sampler. The form determines which prompt template stage 2 renders, which output-shape function stage 1 calls, and which tolerance-policy function fills the tolerance_policy field."
+    },
+    "ops": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "type": "string" },
+      "description": "Ordered list of base ops to compose, drawn from BASE_OPS in packages/shared/src/shared/eval/base_ops.py. Stage 3 AST validation rejects pytorch_code that calls anything outside this allow-list. Length must satisfy the form's op-count rule (Easy=2, Medium=3, Hard>=4). Names are canonical (e.g. 'torch.nn.functional.gelu', 'torch.relu', 'torch.add')."
+    },
+    "input_shapes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "items": { "type": "integer", "minimum": 1 }
+      },
+      "description": "Shape per input tensor. Length matches input_dtypes. Sampled by stage 1 from the form's shape grid."
+    },
+    "input_dtypes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": ["float16", "float32", "bfloat16", "float64", "int8", "int16", "int32", "int64", "bool"]
+      },
+      "description": "Dtype per input tensor. Length matches input_shapes."
+    },
+    "expected_output_shape": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "integer", "minimum": 1 },
+      "description": "Output shape derived deterministically from (form, ops, input_shapes, form_metadata) by stage 1. Passed to the LLM as a sanity check and verified post-execution in stage 4."
+    },
+    "expected_output_dtype": {
+      "type": "string",
+      "enum": ["float16", "float32", "bfloat16", "float64", "int8", "int16", "int32", "int64", "bool"],
+      "description": "Output dtype derived deterministically from (form, ops, input_dtypes) by stage 1. Most forms preserve dtype; argmax flips to int64; mixed-dtype forms follow PyTorch promotion rules."
+    },
+    "tolerance_policy": {
+      "type": "string",
+      "enum": [
+        "default_fp32",
+        "default_fp16",
+        "reduction_fp32",
+        "reduction_fp16",
+        "exact_integer",
+        "masked_logits",
+        "attention_softmax_fp16",
+        "recurrent_scan_fp16",
+        "low_precision_dequant",
+        "fp8_cast"
+      ],
+      "description": "Derived deterministically from (form, expected_output_dtype) by stage 1 — never picked by the LLM. Same closed vocabulary as DatasetRow.attempts.correctness.tolerance_policy_used; the implementation lives in packages/shared/src/shared/verification/tolerance.py."
+    },
+    "rng_seed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "RNG seed for input fixture generation. Fixed per spec for reproducibility — re-running /preflight on the same spec must produce the same eager and Inductor outputs."
+    },
+    "form_metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Form-specific knobs. Each form documents its own required keys in forms.py; the stage-2 prompt renderer reads them, and per-form make_inputs(spec, rng) helpers read them when building the input fixtures. Examples: {'reduce_dim': -1} for unary_then_reduction; {'num_heads': 8, 'causal': false, 'scale': 'auto'} for attention_qkv; {'num_embeddings': 4096, 'embedding_dim': 256, 'norm_eps': 1e-5} for embedding_then_norm. May be {} for forms that need no extra knobs (e.g. chain_2_unary). additionalProperties is true here ONLY — the top-level schema stays tight."
+    }
+  }
+}

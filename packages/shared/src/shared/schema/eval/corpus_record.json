@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tried.local/schemas/eval-corpus-record.json",
+  "title": "TRIED Eval Corpus Record",
+  "description": "One accepted eval-set example. Together with all sibling rows in eval/holdout/synthetic_fusions.jsonl, this is the LOCKED held-out evaluation set: never enters training, RAG, or prompt examples. Each row carries the full EvalSpec it was generated from for reproducibility, plus the materialized pytorch_code and acceptance metadata.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "example_id",
+    "spec",
+    "pytorch_code",
+    "origin",
+    "op_category",
+    "difficulty",
+    "acceptance"
+  ],
+  "properties": {
+    "example_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "UUIDv5 derived from the canonical-AST hash of pytorch_code. Stable across re-runs of the generator: re-generating the same fusion yields the same example_id, which is the join key for paired tests across two model_labels."
+    },
+    "spec": {
+      "$ref": "spec.json",
+      "description": "The fully-determined spec this example was generated from (stage-1 output). Embedded so analysis tooling can read tier/form/ops/shapes without joining against an external sampler log."
+    },
+    "pytorch_code": {
+      "type": "string",
+      "description": "Materialized PyTorch function source produced by stage 2. Has passed AST guardrails (op allow-list, op-count match, single-import) and /preflight (eager runs, Inductor runs, eager-vs-Inductor agree under spec.tolerance_policy)."
+    },
+    "origin": {
+      "type": "string",
+      "const": "synthetic/fusion",
+      "description": "Locked. All eval rows are synthetically composed — never extracted from a repo or model trace."
+    },
+    "op_category": {
+      "type": "string",
+      "enum": [
+        "elementwise_chain",
+        "reduction",
+        "matmul",
+        "convolution",
+        "fused_attention",
+        "normalization",
+        "activation",
+        "loss",
+        "embedding",
+        "quantization",
+        "other"
+      ],
+      "description": "Coarse op family, derived deterministically from spec.form by stage 1. Same closed vocabulary as DatasetRow.source.op_category — so eval results can be cross-tabulated with training data by category."
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": ["Easy", "Medium", "Hard"],
+      "description": "Locked from spec.tier. Drives stratified reporting in the stats package."
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accepted_at",
+        "torch_version",
+        "triton_version",
+        "preflight_eager_first_call_ms",
+        "preflight_inductor_first_call_ms"
+      ],
+      "properties": {
+        "accepted_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "UTC timestamp of /preflight acceptance."
+        },
+        "torch_version": {
+          "type": "string",
+          "description": "PyTorch version of the verification server at acceptance. Locked at 2.3.x for this experiment."
+        },
+        "triton_version": {
+          "type": "string",
+          "description": "Triton version of the verification server at acceptance."
+        },
+        "preflight_eager_first_call_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Cold eager call time at acceptance. Provenance only — eval-run /preflight remeasures the live numbers used in stats."
+        },
+        "preflight_inductor_first_call_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Cold Inductor compile-and-run time at acceptance. Provenance only — eval-run /preflight remeasures."
+        }
+      }
+    }
+  }
+}

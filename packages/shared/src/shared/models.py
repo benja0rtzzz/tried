@@ -1,7 +1,7 @@
 """
 Pydantic v2 models for all record types.
-CorpusRecord maps to eval_and_training.json (what the agent loop reads).
-DatasetRow maps to dataset_record.json (what the orchestrator writes).
+CorpusRecord maps to schema/dataset/eval_and_training.json (what the agent loop reads).
+DatasetRow maps to schema/dataset/dataset_record.json (what the orchestrator writes).
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Corpus record (eval_and_training.json shape)
+# Corpus record (schema/dataset/eval_and_training.json shape)
 # ---------------------------------------------------------------------------
 
 class CorpusRecord(BaseModel):
@@ -174,7 +174,7 @@ class Attempt(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Top-level dataset row (dataset_record.json shape)
+# Top-level dataset row (schema/dataset/dataset_record.json shape)
 # ---------------------------------------------------------------------------
 
 class DatasetRow(BaseModel):
