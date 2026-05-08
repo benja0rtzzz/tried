@@ -2,11 +2,12 @@
 Pydantic v2 models for all record types.
 CorpusRecord maps to schema/dataset/eval_and_training.json (what the agent loop reads).
 DatasetRow maps to schema/dataset/dataset_record.json (what the orchestrator writes).
+EvalSpec / EvalCorpusRecord / EvalRecord map to schema/eval/.
 """
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -32,6 +33,32 @@ __all__ = [
     "Tokens",
     "Attempt",
     "DatasetRow",
+    "EvalSpec",
+    "EvalCorpusRecord",
+    "EvalRecord",
+    "EvalAttempt",
+    "EvalBenchmark",
+    "BaselineCompile",
+    "AcceptanceMeta",
+    "FormName",
+]
+
+
+# Locked closed vocabulary of the 11 fusion-form names. Mirrors the enum
+# in schema/eval/spec.json. Source of metadata for each form lives in
+# shared.eval.forms.FORMS.
+FormName = Literal[
+    "chain_2_unary",
+    "unary_then_residual",
+    "chain_3_unary",
+    "unary_then_reduction",
+    "softmax_then_unary",
+    "unary_then_norm",
+    "attention_qkv",
+    "fused_linear_norm_activation",
+    "gated_mlp_swiglu",
+    "chain_4_unary",
+    "embedding_then_norm",
 ]
 
 
@@ -195,6 +222,166 @@ class DatasetRow(BaseModel):
 
     @model_validator(mode="after")
     def _winning_attempt_consistent_with_outcome(self) -> DatasetRow:
+        terminal_without_winner = {
+            FinalOutcome.CORRECTNESS_FAILED,
+            FinalOutcome.ALL_ATTEMPTS_FAILED,
+        }
+        if self.final_outcome in terminal_without_winner:
+            if self.final_winning_attempt_n is not None:
+                raise ValueError(
+                    f"final_winning_attempt_n must be null for outcome '{self.final_outcome}'"
+                )
+        else:
+            if self.final_winning_attempt_n is None:
+                raise ValueError(
+                    f"final_winning_attempt_n must be non-null for outcome '{self.final_outcome}'"
+                )
+        return self
+
+
+# ===========================================================================
+# Eval models — schema/eval/{spec,corpus_record,record}.json
+# ===========================================================================
+#
+# Sub-models reused from above (CompileResult, CorrectnessCheck, Latency,
+# Tokens) are identical-shape between dataset and eval. The eval-only
+# differences are EvalBenchmark (adds raw 100-iter sample arrays) and the
+# top-level wrappers (EvalSpec, EvalCorpusRecord, EvalRecord).
+
+
+class EvalSpec(BaseModel):
+    """Stage-1 sampler output — fully-determined fusion spec.
+    Matches schema/eval/spec.json."""
+    spec_id:                str
+    tier:                   Difficulty
+    form:                   FormName
+    ops:                    list[str] = Field(min_length=2)
+    input_shapes:           list[list[int]] = Field(min_length=1)
+    input_dtypes:           list[Dtype] = Field(min_length=1)
+    expected_output_shape:  list[int] = Field(min_length=1)
+    expected_output_dtype:  Dtype
+    tolerance_policy:       TolerancePolicy
+    rng_seed:               int = Field(ge=0)
+    form_metadata:          dict[str, Any]
+
+    @model_validator(mode="after")
+    def _shapes_dtypes_length_match(self) -> EvalSpec:
+        if len(self.input_shapes) != len(self.input_dtypes):
+            raise ValueError(
+                f"input_shapes length ({len(self.input_shapes)}) must equal "
+                f"input_dtypes length ({len(self.input_dtypes)})"
+            )
+        return self
+
+
+class AcceptanceMeta(BaseModel):
+    """Provenance for one accepted eval-corpus row at /preflight time."""
+    accepted_at:                       datetime
+    torch_version:                     str
+    triton_version:                    str
+    preflight_eager_first_call_ms:     float = Field(ge=0)
+    preflight_inductor_first_call_ms:  float = Field(ge=0)
+
+
+class EvalCorpusRecord(BaseModel):
+    """Accepted held-out eval row. Matches schema/eval/corpus_record.json.
+    Lives in eval/holdout/synthetic_fusions.jsonl after the stage-1→5 pipeline."""
+    example_id:   str
+    spec:         EvalSpec
+    pytorch_code: str
+    origin:       Literal["synthetic/fusion"] = "synthetic/fusion"
+    op_category:  OpCategory
+    difficulty:   Difficulty
+    acceptance:   AcceptanceMeta
+
+    @model_validator(mode="after")
+    def _difficulty_matches_spec_tier(self) -> EvalCorpusRecord:
+        if self.difficulty != self.spec.tier:
+            raise ValueError(
+                f"difficulty ({self.difficulty}) must equal spec.tier ({self.spec.tier})"
+            )
+        return self
+
+
+class EvalBenchmark(BaseModel):
+    """Same as Benchmark plus the raw 100-iter sample arrays required for
+    paired non-parametric tests (Wilcoxon, bootstrap CIs, IQR)."""
+    triton_ms:           float = Field(gt=0)
+    eager_ms:            float = Field(gt=0)
+    inductor_ms:         float = Field(gt=0)
+    speedup_vs_eager:    float = Field(gt=0)
+    speedup_vs_inductor: float = Field(gt=0)
+    triton_std_ms:       float = Field(ge=0)
+    eager_std_ms:        float = Field(ge=0)
+    inductor_std_ms:     float = Field(ge=0)
+    triton_samples_ms:   list[float] = Field(min_length=100, max_length=100)
+    eager_samples_ms:    list[float] = Field(min_length=100, max_length=100)
+    inductor_samples_ms: list[float] = Field(min_length=100, max_length=100)
+
+
+class EvalAttempt(BaseModel):
+    """One agent-loop iteration on an eval example. Reuses CompileResult /
+    CorrectnessCheck / Latency / Tokens; only differs from Attempt in that
+    the benchmark embeds raw timing samples (EvalBenchmark)."""
+    attempt_n:            int = Field(ge=0)
+    prior_advice_applied: Optional[str]
+    triton_code:          str
+    compile:              CompileResult
+    correctness:          Optional[CorrectnessCheck]
+    benchmark:            Optional[EvalBenchmark]
+    judge_classification: JudgeClassification
+    judge_fix_suggestion: Optional[str]
+    latency:              Latency
+    tokens:               Tokens
+    timestamp:            datetime
+
+    @model_validator(mode="after")
+    def _correctness_requires_compile_success(self) -> EvalAttempt:
+        if self.compile.status == CompileStatus.FAILED and self.correctness is not None:
+            raise ValueError("correctness must be null when compile failed")
+        return self
+
+    @model_validator(mode="after")
+    def _benchmark_requires_correctness_passed(self) -> EvalAttempt:
+        if self.benchmark is not None:
+            if self.correctness is None:
+                raise ValueError("benchmark requires correctness to be non-null")
+            if self.correctness.status == CorrectnessStatus.FAILED:
+                raise ValueError("benchmark must be null when correctness failed")
+        return self
+
+
+class BaselineCompile(BaseModel):
+    """Cold first-call timings for the eager and Inductor baselines on this
+    eval run. Inductor first-call is dominated by compile cost (60-120 s)
+    and is the experiment's headline 'compile cost' number."""
+    eager_first_call_ms:    float = Field(ge=0)
+    inductor_first_call_ms: float = Field(ge=0)
+
+
+class EvalRecord(BaseModel):
+    """Per-example result of one eval run. Matches schema/eval/record.json.
+    Written to eval/results/<model_label>/eval_rows.jsonl."""
+    example_id:              str
+    model_label:             str
+    run_id:                  str
+    spec:                    EvalSpec
+    attempts:                list[EvalAttempt] = Field(min_length=1)
+    final_outcome:           FinalOutcome
+    final_winning_attempt_n: Optional[int] = Field(default=None, ge=0)
+    baseline_compile:        BaselineCompile
+
+    @model_validator(mode="after")
+    def _attempt_indices_are_sequential(self) -> EvalRecord:
+        for i, attempt in enumerate(self.attempts):
+            if attempt.attempt_n != i:
+                raise ValueError(
+                    f"attempt_n={attempt.attempt_n} at array index {i}; must match index"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _winning_attempt_consistent_with_outcome(self) -> EvalRecord:
         terminal_without_winner = {
             FinalOutcome.CORRECTNESS_FAILED,
             FinalOutcome.ALL_ATTEMPTS_FAILED,
