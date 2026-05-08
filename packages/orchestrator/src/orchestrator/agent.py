@@ -15,6 +15,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
+
 from shared.dataset import append_dataset_row, append_skipped
 from shared.enums import (
     CompileStatus,
@@ -125,14 +127,24 @@ def run_job(
 
         if compile_resp.status == CompileStatus.SUCCESS:
             t0 = time.monotonic()
-            run_resp = client.run(RunRequest(
-                triton_code=gen.triton_code,
-                pytorch_code=record.pytorch_code,
-                input_shapes=record.input_shapes,
-                input_dtypes=record.input_dtypes,
-                rng_seed=record.rng_seed,
-                tolerance_policy=policy,
-            ))
+            try:
+                run_resp = client.run(RunRequest(
+                    triton_code=gen.triton_code,
+                    pytorch_code=record.pytorch_code,
+                    input_shapes=record.input_shapes,
+                    input_dtypes=record.input_dtypes,
+                    rng_seed=record.rng_seed,
+                    tolerance_policy=policy,
+                ))
+            except httpx.TimeoutException:
+                _log.warning(
+                    "attempt %d  /run timed out — recording as correctness FAILED",
+                    attempt_n,
+                )
+                run_resp = RunResponse(
+                    correctness_status=CorrectnessStatus.FAILED,
+                    error_message="ReadTimeout: /run did not respond within the client timeout",
+                )
             run_ms = int((time.monotonic() - t0) * 1000)
 
             if run_resp.correctness_status == CorrectnessStatus.PASSED:

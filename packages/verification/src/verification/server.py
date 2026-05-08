@@ -52,9 +52,9 @@ if not _API_KEY:
     raise RuntimeError("VERIFICATION_API_KEY environment variable is not set")
 
 # Server-side cap on how long a single GPU task may run in the worker subprocess.
-# Must exceed the orchestrator's VERIFICATION_INDUCTOR_TIMEOUT_S (default 300 s) so
-# the server can return an error response before the HTTP connection drops.
-_WORKER_TIMEOUT = float(os.getenv("VERIFICATION_WORKER_TIMEOUT_S", "480"))
+# Must be LESS than the orchestrator's _INDUCTOR_TIMEOUT (300 s) so the server kills
+# a stuck subprocess and returns an error response before the HTTP connection drops.
+_WORKER_TIMEOUT = 240.0
 
 
 class _HealthResponse(BaseModel):
