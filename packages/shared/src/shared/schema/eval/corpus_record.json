@@ -52,8 +52,8 @@
     },
     "difficulty": {
       "type": "string",
-      "enum": ["Easy", "Medium", "Hard"],
-      "description": "Locked from spec.tier. Drives stratified reporting in the stats package."
+      "enum": ["easy", "medium", "hard"],
+      "description": "Locked from spec.tier. Drives stratified reporting in the stats package. Same closed vocabulary as the existing Difficulty enum."
     },
     "acceptance": {
       "type": "object",

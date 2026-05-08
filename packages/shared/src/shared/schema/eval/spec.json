@@ -26,8 +26,8 @@
     },
     "tier": {
       "type": "string",
-      "enum": ["Easy", "Medium", "Hard"],
-      "description": "Difficulty tier. Determines target n in the eval split (105 / 115 / 80) and downstream stratified reporting. Top-level (not derived from form) so stratification is direct without joining against the forms registry."
+      "enum": ["easy", "medium", "hard"],
+      "description": "Difficulty tier. Determines target n in the eval split (105 / 115 / 80) and downstream stratified reporting. Top-level (not derived from form) so stratification is direct without joining against the forms registry. Same closed vocabulary as the existing Difficulty enum."
     },
     "form": {
       "type": "string",
