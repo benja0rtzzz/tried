@@ -73,9 +73,16 @@ class BenchmarkRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class PreflightResponse(BaseModel):
-    passed:            bool
-    vs_eager_inductor: Optional[CorrectnessStats] = None
-    error_message:     Optional[str] = None
+    passed:                  bool
+    vs_eager_inductor:       Optional[CorrectnessStats] = None
+    error_message:           Optional[str] = None
+    # Cold first-call timings, CUDA-event timed (per benchmarking-protocol.md).
+    # Populated whenever the corresponding call ran without throwing; null
+    # iff the harness errored before that call. The eval-gen pipeline uses
+    # these for EvalCorpusRecord.acceptance; the dataset pipeline ignores
+    # them.
+    eager_first_call_ms:    Optional[float] = Field(default=None, ge=0)
+    inductor_first_call_ms: Optional[float] = Field(default=None, ge=0)
 
 
 class CompileResponse(BaseModel):

@@ -23,7 +23,7 @@
       "type": "object",
       "additionalProperties": false,
       "description": "Result of the eager-vs-Inductor sanity check. passed=true means references agree and the agent loop may start. passed=false means the example is a skip. error_message is set when the harness itself failed (import error, shape error, OOM, etc.) rather than a tolerance disagreement.",
-      "required": ["passed", "vs_eager_inductor", "error_message"],
+      "required": ["passed", "vs_eager_inductor", "error_message", "eager_first_call_ms", "inductor_first_call_ms"],
       "properties": {
         "passed": {
           "type": "boolean",
@@ -36,6 +36,16 @@
         "error_message": {
           "type": ["string", "null"],
           "description": "Non-null only when the harness itself failed (not a tolerance failure). Null on clean pass or clean tolerance failure."
+        },
+        "eager_first_call_ms": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Wall time of the first eager invocation of pytorch_code, CUDA-event timed. Populated when the eager call ran without throwing; null iff the harness errored before that call. Eval-gen pipeline records this in EvalCorpusRecord.acceptance; dataset pipeline ignores it."
+        },
+        "inductor_first_call_ms": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Wall time of the first torch.compile(backend='inductor') invocation, CUDA-event timed. Dominated by Inductor cold-compile (typically 60–120 s). Populated when the Inductor call ran; null on earlier harness failure."
         }
       }
     },

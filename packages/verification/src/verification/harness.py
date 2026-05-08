@@ -270,24 +270,55 @@ def preflight(
     rng_seed: int,
     tolerance_policy: TolerancePolicy,
 ) -> PreflightResponse:
-    """Run eager vs Inductor sanity check on the PyTorch reference code."""
+    """Run eager vs Inductor sanity check on the PyTorch reference code.
+    Also CUDA-event-times the first eager call and the first Inductor
+    call so the eval-gen pipeline can record cold compile cost in
+    EvalCorpusRecord.acceptance."""
+    eager_ms: float | None = None
+    inductor_ms: float | None = None
     try:
         torch_fn = _load_wrapper(pytorch_code)
         tol = get_tolerance(tolerance_policy)
         inputs = _make_inputs(input_shapes, input_dtypes, rng_seed)
 
+        # Time the first eager call.
+        torch.cuda.synchronize()
+        eager_start = torch.cuda.Event(enable_timing=True)
+        eager_end = torch.cuda.Event(enable_timing=True)
+        eager_start.record()
         with torch.no_grad():
             eager_out = _to_flat_tensor(torch_fn(*inputs))
+        eager_end.record()
+        torch.cuda.synchronize()
+        eager_ms = eager_start.elapsed_time(eager_end)
 
+        # Time the first Inductor call (which triggers compile + run).
         inductor_fn = torch.compile(torch_fn, backend="inductor")
+        torch.cuda.synchronize()
+        ind_start = torch.cuda.Event(enable_timing=True)
+        ind_end = torch.cuda.Event(enable_timing=True)
+        ind_start.record()
         with torch.no_grad():
             inductor_out = _to_flat_tensor(inductor_fn(*inputs))
+        ind_end.record()
+        torch.cuda.synchronize()
+        inductor_ms = ind_start.elapsed_time(ind_end)
 
         stats, passed = _compute_stats(inductor_out, eager_out, tol)
-        return PreflightResponse(passed=passed, vs_eager_inductor=stats)
+        return PreflightResponse(
+            passed=passed,
+            vs_eager_inductor=stats,
+            eager_first_call_ms=eager_ms,
+            inductor_first_call_ms=inductor_ms,
+        )
     except Exception as e:
         _log.error("preflight failed: %s: %s", type(e).__name__, e)
-        return PreflightResponse(passed=False, error_message=f"{type(e).__name__}: {e}")
+        return PreflightResponse(
+            passed=False,
+            error_message=f"{type(e).__name__}: {e}",
+            eager_first_call_ms=eager_ms,
+            inductor_first_call_ms=inductor_ms,
+        )
 
 
 def run_verification(
