@@ -14,21 +14,23 @@ Source of all PyTorch ops used in the experiment. Split into a training corpus (
 
 The torch.fx tracer is being built as part of the pipeline anyway. Models must be architecturally diverse to avoid deduplication waste — transformers, CNNs, SSMs, and MLPs each contribute distinct compute patterns. Curated training rows are hand-written standalone PyTorch references used to fill behavior gaps found by the quota/fingerprint audit; they are training examples, not held-out eval examples.
 
-## Eval corpus (130 synthetic fusions)
+## Eval corpus (437 synthetic fusions)
 
 Synthetically constructed — not extracted from any existing repo. Not contaminated by training: a fusion like `layer_norm(gelu(x))` is a different generation task than generating `layer_norm` or `gelu` individually.
 
 **Base ops:** tritonbench `operators/` set + a small set of plain PyTorch built-ins not present in training (`relu`, `sigmoid`, `tanh`, `exp`).
 
-**Difficulty split:**
+**Difficulty split (post-cleanup, 2026-05-09):**
 
 | Tier | Count | Definition |
 |---|---|---|
-| Easy | ~45 | 2-op elementwise fusions |
-| Medium | ~50 | 3-op fusions, or any fusion involving a reduction |
-| Hard | ~35 | 4+ ops, or complex memory patterns (attention-style, fused linear+norm+dropout) |
+| Easy | 103 | 2-op elementwise fusions |
+| Medium | 217 | 3-op fusions, or any fusion involving a reduction |
+| Hard | 117 | 4+ ops, or complex memory patterns (attention-style, fused linear+norm+dropout) |
 
 Difficulty tiers are for eval reporting only. All failures at any tier are recorded in the dataset. `origin` for all eval examples: `"synthetic/fusion"`.
+
+The original plan was 130 examples; the spec sampler produced 443 rows in `eval/holdout/synthetic_fusions.jsonl`. After the vanilla qwen run, six rows were dropped (4 duplicate `example_id`s introduced during sampling, and 2 specs that never produced an `EvalRecord`) so that holdout and result files contain the same 437 unique IDs. See `docs/decision-log.md` 2026-05-09 entry.
 
 ## Extraction rules
 

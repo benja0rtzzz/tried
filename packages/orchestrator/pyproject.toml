@@ -9,6 +9,7 @@ dependencies = [
     "openai>=1.0",
     "pydantic>=2.0",
     "mlx-lm>=0.16",
+    "python-dotenv>=1.2.2",
 ]
 
 [tool.uv.sources]

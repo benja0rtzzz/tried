@@ -135,11 +135,12 @@
     "benchmark_response": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Timing results for the Triton kernel and both baselines. Returned as the result field inside job_status once the job reaches done. Speedups are the primary metric; absolute ms are recorded for reproducibility. Field names and semantics match the benchmark sub-model in dataset_record.json.",
+      "description": "Timing results for the Triton kernel and both baselines. Returned as the result field inside job_status once the job reaches done. Speedups are the primary metric; absolute ms are recorded for reproducibility. The eval pipeline additionally consumes the *_samples_ms arrays for non-parametric paired tests.",
       "required": [
         "triton_ms", "eager_ms", "inductor_ms",
         "speedup_vs_eager", "speedup_vs_inductor",
-        "triton_std_ms", "eager_std_ms", "inductor_std_ms"
+        "triton_std_ms", "eager_std_ms", "inductor_std_ms",
+        "triton_samples_ms", "eager_samples_ms", "inductor_samples_ms"
       ],
       "properties": {
         "triton_ms":           { "type": "number", "exclusiveMinimum": 0, "description": "Median wall time of the Triton kernel across 100 runs, in milliseconds." },
@@ -149,7 +150,10 @@
         "speedup_vs_inductor": { "type": "number", "exclusiveMinimum": 0, "description": "inductor_ms / triton_ms. Values >1.0 mean Triton beats Inductor." },
         "triton_std_ms":       { "type": "number", "minimum": 0, "description": "Standard deviation of the 100 Triton timing runs, in milliseconds." },
         "eager_std_ms":        { "type": "number", "minimum": 0, "description": "Standard deviation of the 100 eager timing runs, in milliseconds." },
-        "inductor_std_ms":     { "type": "number", "minimum": 0, "description": "Standard deviation of the 100 Inductor timing runs, in milliseconds." }
+        "inductor_std_ms":     { "type": "number", "minimum": 0, "description": "Standard deviation of the 100 Inductor timing runs, in milliseconds." },
+        "triton_samples_ms":   { "type": "array", "minItems": 100, "maxItems": 100, "items": { "type": "number", "exclusiveMinimum": 0 }, "description": "All 100 timed-iteration measurements for the Triton kernel. Required by EvalRecord.attempts[].benchmark for non-parametric paired tests and IQR-based descriptive stats." },
+        "eager_samples_ms":    { "type": "array", "minItems": 100, "maxItems": 100, "items": { "type": "number", "exclusiveMinimum": 0 }, "description": "All 100 timed-iteration measurements for PyTorch eager." },
+        "inductor_samples_ms": { "type": "array", "minItems": 100, "maxItems": 100, "items": { "type": "number", "exclusiveMinimum": 0 }, "description": "All 100 timed-iteration measurements for torch.compile + Inductor." }
       }
     },
 

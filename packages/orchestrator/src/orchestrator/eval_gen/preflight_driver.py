@@ -235,7 +235,7 @@ def run(
         logger.info(f"resume: skipping {before - len(rows)} already-processed rows")
 
     client = make_client()
-    base_url = os.environ["VERIFICATION_BASE_URL"]
+    base_url = os.environ["VERIFICATION_SERVER_URL"]
     api_key = os.environ["VERIFICATION_API_KEY"]
     versions = _fetch_server_versions(base_url, api_key)
     logger.info(
@@ -283,6 +283,8 @@ def run(
 
 
 def main() -> None:
+    from dotenv import load_dotenv
+    load_dotenv()
     parser = argparse.ArgumentParser(
         prog="orchestrator.eval_gen.preflight_driver",
         description="Run /preflight on Block-C output; produce EvalCorpusRecord rows.",

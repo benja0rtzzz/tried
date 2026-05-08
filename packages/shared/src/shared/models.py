@@ -38,7 +38,6 @@ __all__ = [
     "EvalRecord",
     "EvalAttempt",
     "EvalBenchmark",
-    "BaselineCompile",
     "AcceptanceMeta",
     "FormName",
 ]
@@ -351,25 +350,16 @@ class EvalAttempt(BaseModel):
         return self
 
 
-class BaselineCompile(BaseModel):
-    """Cold first-call timings for the eager and Inductor baselines on this
-    eval run. Inductor first-call is dominated by compile cost (60-120 s)
-    and is the experiment's headline 'compile cost' number."""
-    eager_first_call_ms:    float = Field(ge=0)
-    inductor_first_call_ms: float = Field(ge=0)
-
-
 class EvalRecord(BaseModel):
     """Per-example result of one eval run. Matches schema/eval/record.json.
-    Written to eval/results/<model_label>/eval_rows.jsonl."""
+    Written to eval/results/<model_label>/eval_rows.jsonl. The model_label
+    is the parent directory; it is not stored in the record itself."""
     example_id:              str
-    model_label:             str
     run_id:                  str
     spec:                    EvalSpec
     attempts:                list[EvalAttempt] = Field(min_length=1)
     final_outcome:           FinalOutcome
     final_winning_attempt_n: Optional[int] = Field(default=None, ge=0)
-    baseline_compile:        BaselineCompile
 
     @model_validator(mode="after")
     def _attempt_indices_are_sequential(self) -> EvalRecord:

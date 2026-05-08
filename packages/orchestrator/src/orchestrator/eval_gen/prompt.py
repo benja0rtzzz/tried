@@ -53,7 +53,7 @@ You are translating a fully-determined fusion spec into a single PyTorch functio
 - The module must begin with exactly `import torch` on line 1, followed by a blank line, then exactly one function definition. No other imports, no aliases.
 - No control flow (if / for / while), no comprehensions, no lambdas, no nested function definitions.
 - Function-form binary and unary ops only: write `torch.add(x, y)`, never `x + y` or `-x`.
-- No tensor methods that change device or dtype: no `.to()`, `.cuda()`, `.cpu()`, `.type()`, `.type_as()`.
+- No tensor methods that change device or dtype: no `.to()`, `.cuda()`, `.cpu()`, `.type()`, `.type_as()`, `.float()`, `.half()`, `.double()`, `.bfloat16()`.
 - No tensor allocation inside the function body: no `torch.rand*`, `torch.empty*`, `torch.zeros*`, `torch.ones*`, `torch.full`, `torch.tensor`.
 - The function must be deterministic given fixed inputs.
 - Apply the required ops in the EXACT order listed in "Required ops" below — this is checked by an AST validator.

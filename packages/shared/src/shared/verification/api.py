@@ -107,6 +107,13 @@ class BenchmarkResponse(BaseModel):
     triton_std_ms:       float = Field(ge=0)
     eager_std_ms:        float = Field(ge=0)
     inductor_std_ms:     float = Field(ge=0)
+    # Raw 100-iter sample arrays. Required by the eval pipeline
+    # (EvalRecord.attempts[].benchmark) for non-parametric paired tests
+    # (Wilcoxon, bootstrap CIs) and IQR-based descriptive stats. Length
+    # matches the locked iteration count in benchmarking-protocol.md.
+    triton_samples_ms:   list[float] = Field(min_length=100, max_length=100)
+    eager_samples_ms:    list[float] = Field(min_length=100, max_length=100)
+    inductor_samples_ms: list[float] = Field(min_length=100, max_length=100)
 
 
 class JobAccepted(BaseModel):

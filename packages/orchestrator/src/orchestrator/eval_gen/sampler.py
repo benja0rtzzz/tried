@@ -27,24 +27,25 @@ from shared.eval.forms import FORMS, Form
 from shared.models import EvalSpec
 
 
-# Per-form spec quotas — proportional to per-form acceptance targets.
-# Sum: 600 (the locked overage budget). See docs/decision-log.md and
-# the planning thread that produced these.
+# Per-form spec quotas for the medium+hard supplement run.
+# Easy forms (chain_2_unary, unary_then_residual) are omitted — the
+# 123 easy rows already in with_code.jsonl are sufficient.
+# Quotas are weighted toward forms with large unexplored grids so that
+# the driver's IntraEvalDedup doesn't eat most of the budget.
 QUOTAS: dict[str, int] = {
-    "chain_2_unary":                 160,
-    "unary_then_residual":            50,
-    "chain_3_unary":                  60,
-    "unary_then_reduction":           60,
-    "softmax_then_unary":             50,
-    "unary_then_norm":                60,
-    "attention_qkv":                  50,
-    "fused_linear_norm_activation":   40,
-    "gated_mlp_swiglu":               30,
-    "chain_4_unary":                  20,
-    "embedding_then_norm":            20,
+    "chain_3_unary":                20,   # medium, grid=6144
+    "unary_then_reduction":         20,   # medium, grid=2080
+    "softmax_then_unary":           15,   # medium, grid=256
+    "unary_then_norm":              15,   # medium, grid=48 (mostly covered)
+    "attention_qkv":                10,   # hard,   grid=8  (exhausted)
+    "fused_linear_norm_activation": 20,   # hard,   grid=64
+    "gated_mlp_swiglu":             10,   # hard,   grid=8  (exhausted/low-pass)
+    "chain_4_unary":                25,   # hard,   grid=24576
+    "embedding_then_norm":          15,   # hard,   grid=48
 }
-assert sum(QUOTAS.values()) == 600
-assert set(QUOTAS) == set(FORMS), "QUOTAS keys must match FORMS"
+assert sum(QUOTAS.values()) == 150
+assert set(QUOTAS) == set(FORMS) - {"chain_2_unary", "unary_then_residual"}, \
+    "QUOTAS keys must match non-easy FORMS"
 
 # Stable namespace for spec_id UUIDv5 derivation (TRIED-eval).
 _NAMESPACE = uuid.UUID("00000000-0000-0000-0000-000000000eaa")
@@ -71,10 +72,11 @@ def _form_metadata_variants(form: Form, shape_variant: tuple) -> list[dict[str, 
         return [{"normalized_shape": (shape_variant[0][-1],), "norm_eps": 1e-5}]
     if name == "attention_qkv":
         # num_heads from H dim of [B, H, T, D_h]; scale = 1/sqrt(D_h).
+        # causal=True omitted: building a triangular mask requires tensor
+        # allocation or control flow, both of which the AST validator rejects.
         head_dim = shape_variant[0][3]
         return [
-            {"num_heads": shape_variant[0][1], "causal": c, "scale": 1.0 / sqrt(head_dim)}
-            for c in (False, True)
+            {"num_heads": shape_variant[0][1], "causal": False, "scale": 1.0 / sqrt(head_dim)}
         ]
     if name == "fused_linear_norm_activation":
         # normalized_shape comes from weight.shape[0] (D_out).
@@ -189,7 +191,7 @@ def sample_specs_for_form(
     return specs
 
 
-def sample_all(rng_master_seed: int = 0) -> list[EvalSpec]:
+def sample_all(rng_master_seed: int = 1) -> list[EvalSpec]:
     """Run the sampler across every form, respecting QUOTAS. Returns the
     full ~600 spec list."""
     rng = random.Random(rng_master_seed)
@@ -214,12 +216,20 @@ DEFAULT_OUT = Path("data/eval_gen/specs.jsonl")
 
 
 def main() -> None:
-    specs = sample_all()
-    write_specs(specs, DEFAULT_OUT)
+    import argparse
+    from dotenv import load_dotenv
+    load_dotenv()
+    parser = argparse.ArgumentParser(prog="orchestrator.eval_gen.sampler")
+    parser.add_argument("--seed", type=int, default=1, help="master RNG seed")
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    args = parser.parse_args()
+
+    specs = sample_all(rng_master_seed=args.seed)
+    write_specs(specs, args.out)
     by_form: dict[str, int] = {}
     for s in specs:
         by_form[s.form] = by_form.get(s.form, 0) + 1
-    print(f"Wrote {len(specs)} specs to {DEFAULT_OUT}")
+    print(f"Wrote {len(specs)} specs to {args.out}")
     for form_name, count in by_form.items():
         target = QUOTAS[form_name]
         print(f"  {form_name}: {count} (target {target})")

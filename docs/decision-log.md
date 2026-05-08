@@ -4,6 +4,38 @@ Lightweight record of non-obvious decisions. Full reasoning lives in the Claude 
 All entrees here are accepted.
 ---
 
+## 2026-05-09 — Orchestrator split: dataset pipeline moved into its own subpackage alongside new eval pipelines
+
+The orchestrator originally housed a single pipeline — the dataset-generation agent loop — at `orchestrator/main.py` and `orchestrator/agent.py`. The eval workflow has since grown into two distinct pipelines (`eval_gen/` for synthetic-fusion corpus generation, `eval_run/` for the single-attempt eval runner against the locked holdout), each with its own entry point and helpers. Leaving the dataset pipeline at the package root made the layout asymmetric and obscured that there are now three peer pipelines, not one pipeline plus eval extras.
+
+The dataset pipeline is now `orchestrator/dataset/` (`main.py` + `agent.py`, moved with `git mv` to preserve history). New run command: `TRIED_ROLE=orchestrator uv run python -m orchestrator.dataset.main`. Shared infrastructure — `clients/`, `prompts/`, `improvement/` — stays at the package root because all three pipelines use it. No behavior change; this is a layout refactor recorded so the experiment trail shows when the split happened.
+
+Implementation: `git mv` of the two files into `orchestrator/dataset/`; new `orchestrator/dataset/__init__.py` documenting the split; self-import in `dataset/main.py` retargeted to `orchestrator.dataset.agent`; `packages/tests/pipeline_test.py` import updated; sibling comment in `eval_run/agent.py` retargeted to `orchestrator.dataset.agent`.
+
+---
+
+## 2026-05-09 — `baseline_compile` dropped from EvalRecord; Week 3 t-test target swapped to Triton compile time
+
+Descriptive stats on the cleaned vanilla run revealed that `baseline_compile.inductor_first_call_ms` had a median of 65 ms (max 3.03 s, p99 well under 1 s) — three orders of magnitude below the "60–120 s headline cold compile cost" the schema description claimed. Inductor's on-disk kernel cache survives across rows in a single eval process (and across runs of the same process tree), so only the very first row of a fresh process pays a real cold compile; every subsequent row is a cache hit. The recorded numbers measure "first-invocation latency under a warm Inductor cache", not compile cost. The fine-tuned eval would inherit the same problem because it shares the same harness.
+
+Forcing a real cold compile per row (clearing `torch._inductor` caches between rows) would add 7–14 hours of pure compile to each run, and the metric is secondary — the project's headline claim is `speedup_vs_inductor`, not "Triton compiles faster than Inductor". The course Week 3 rubric requires *a* paired t-test on project data; nothing requires it to be on cold-compile time. So `baseline_compile` is removed entirely from `EvalRecord`, the schema, and the orchestrator writer; the verification preflight API still returns `eager_first_call_ms` / `inductor_first_call_ms` because the corpus generator (`preflight_driver.py`) embeds them in `EvalCorpusRecord.preflight_*_ms`, where each spec is preflight-checked in isolation at sampling time and the cache argument doesn't apply the same way.
+
+The Week 3 paired t-test is re-targeted to `log(attempts[winning].latency.compile_ms)` — Triton compile time, recorded per attempt by the verification server's `/compile` endpoint. Each call is a fresh `triton.JITFunction` compilation (no cross-row cache), so the values measure real compile cost. Vanilla median is 51 ms, IQR 48–57 ms, max 169 ms — clean distribution, log-transformed will be approximately normal and suitable for a paired t-test against the fine-tuned run. Wilcoxon on log-speedup and McNemar on pass rate are unaffected.
+
+Implementation: removed `BaselineCompile` from `shared/models.py`; removed `baseline_compile` from `EvalRecord` and `schema/eval/record.json`; stripped `baseline_compile` from existing `eval/results/qwen2.5-coder:14b-vanilla/eval_rows.jsonl`; simplified `eval_run/agent.py` (no longer builds `BaselineCompile` and no longer rejects preflights with null first-call timings, since `passed=True` is sufficient); replaced `descriptive.baseline_compile_stats` with `descriptive.triton_compile_stats` and re-wired the report; renamed `hypothesis.paired_t_log_compile` to `paired_t_log_triton_compile`; updated `docs/eval-stats.md` (course-week table, Group A/B tables, Week 4 sample-size).
+
+---
+
+## 2026-05-09 — Eval set cleanup to 437 unique example_ids; `model_label` dropped from EvalRecord
+
+The vanilla qwen eval finished and surfaced two issues. First, `eval/holdout/synthetic_fusions.jsonl` carried 4 duplicate `example_id`s from the spec sampler (443 lines, 439 unique), and the harness faithfully ran the duplicates twice — `eval_rows.jsonl` ended at 441 lines / 437 unique with 2 specs that never produced an `EvalRecord`. Second, `model_label` was an in-record field on every `EvalRecord` even though every row in a given file shares the same value; the parent directory `eval/results/<label>/` already identifies the condition, so the field was pure redundancy.
+
+Both files were rewritten to the same 437 unique `example_id`s — duplicate occurrences dropped first-seen-wins, and the 2 specs missing from results were dropped from holdout to keep the fine-tuned eval aligned with vanilla. The held-out eval is in the locked set; this edit was authorized by the user as a one-shot cleanup before the second run, with no agent-loop or scoring change. `model_label` was removed from `schema/eval/record.json` (now 7 required fields), `EvalRecord` in `shared/models.py`, and the orchestrator writer; the orchestrator CLI still takes `--model-label` to determine the output folder. The tier counts moved from the original plan's 105 / 115 / 80 to the empirical 103 / 217 / 117 — `docs/corpus.md` and `docs/eval-stats.md` updated to match. Sample-size analysis at n=437 is at least as powerful as the original n=300 plan.
+
+Implementation: `eval/holdout/synthetic_fusions.jsonl`, `eval/results/qwen2.5-coder:14b-vanilla/eval_rows.jsonl`, `packages/shared/src/shared/schema/eval/record.json`, `packages/shared/src/shared/models.py` (`EvalRecord`), `packages/orchestrator/src/orchestrator/eval_run/agent.py`, `docs/corpus.md`, `docs/eval-stats.md`.
+
+---
+
 ## 2026-05-06 — Generator now sees its prior Triton code on retry
 
 Prior to this change the generator received only the judge's natural-language fix advice between attempts; its own previous Triton code was discarded. A 13-row test run produced 12 `all_attempts_failed` outcomes with a clear cyclic pattern: each attempt would apply the latest advice but silently regress an earlier fix because the model had no working memory of the kernel state it was editing. Example trace (`47f75bb3...`, gelu+residual): int64 offsets → fix int32 cast → drop BLOCK_SIZE constexpr → restore BLOCK_SIZE but use invalid `tl.arange(dtype=...)` → drop `dtype` and BLOCK_SIZE again → back to the original int64 error.

@@ -11,16 +11,16 @@ Two JSONL files, both per-row `EvalRecord`, joined by `example_id`:
 - `eval/results/<model_label_A>/eval_rows.jsonl`
 - `eval/results/<model_label_B>/eval_rows.jsonl`
 
-Each row carries the full `EvalSpec` (so `tier`, `form`, `op_category` are local) and the full agent-loop result (so `final_outcome`, `attempts[*].benchmark`, `attempts[*].latency`, `baseline_compile` are local).
+Each row carries the full `EvalSpec` (so `tier`, `form`, `op_category` are local) and the full agent-loop result (so `final_outcome`, `attempts[*].benchmark`, `attempts[*].latency` are local).
 
 ## Course → analysis map
 
 | Course week | Source material | Analyses produced |
 |---|---|---|
 | 1 — Fundamentos de Probabilidad | Sample spaces, conditional probability, Bayes, expected value | Outcome distribution, conditional `P(faster | tier)`, expected speedup |
-| 2 — Distribuciones y Estadística Descriptiva | Bernoulli, Binomial, CLT, IQR, descriptive stats | Per-tier pass rate w/ Binomial CI, per-method timing distributions w/ Q1/median/Q3/IQR, outlier flagging, log-speedup stats, cold compile-time stats |
-| 3 — Pruebas de Hipótesis | H₀/H₁, p-values, paired t-test | **Paired McNemar** on pass rate (vanilla vs fine-tuned), **paired Wilcoxon signed-rank** on log-speedup, paired t-test on log Inductor cold-compile time |
-| 4 — Power Analysis | Cohen's d/h, sample-size calc, post-hoc power | Pre-experiment MDE at locked n=300, post-hoc power on observed effect, Cohen's h on pass-rate lift |
+| 2 — Distribuciones y Estadística Descriptiva | Bernoulli, Binomial, CLT, IQR, descriptive stats | Per-tier pass rate w/ Binomial CI, per-method timing distributions w/ Q1/median/Q3/IQR, outlier flagging, log-speedup stats, Triton compile-time stats |
+| 3 — Pruebas de Hipótesis | H₀/H₁, p-values, paired t-test | **Paired McNemar** on pass rate (vanilla vs fine-tuned), **paired Wilcoxon signed-rank** on log-speedup, paired t-test on log Triton compile time |
+| 4 — Power Analysis | Cohen's d/h, sample-size calc, post-hoc power | Pre-experiment MDE at locked n=437, post-hoc power on observed effect, Cohen's h on pass-rate lift |
 
 ## Group A — analyses that need new eval-schema fields
 
@@ -31,14 +31,12 @@ These drove the additions in `schema/eval/record.json` beyond what `dataset_reco
 | Per-method timing IQR / quartiles / outlier flagging (Week 2) | `attempts[*].benchmark.{triton,eager,inductor}_samples_ms` | `DatasetRow` records median + std only. Quartiles, IQR, and 1.5×IQR outlier detection require the raw 100-iter samples. |
 | Bootstrap CI on median speedup (Week 2) | same `*_samples_ms` arrays | Bootstrap resamples from the per-iteration distribution. Median + std doesn't carry enough information. |
 | Paired Wilcoxon signed-rank on per-iter speedup (Week 3) | same `*_samples_ms` arrays | The non-parametric paired test wants per-pair raw values, not summary statistics. |
-| Cold compile-time descriptive stats (Week 2) | `baseline_compile.{eager,inductor}_first_call_ms` | `DatasetRow.attempts[*].latency.compile_ms` is **Triton compile**, not the eager / Inductor baselines. The "Inductor compiles in 60-120 s" headline number isn't recoverable from the dataset schema. |
-| Compile-vs-runtime breakeven analysis (Week 2) | `baseline_compile.*` + `attempts[*].latency.compile_ms` + `attempts[*].benchmark.*_ms` | Combines the new compile-time fields with existing latency / benchmark fields. |
-| Joining two model conditions for paired tests (Week 3) | `model_label`, `run_id`, `example_id` | `DatasetRow` has no concept of a "condition". `model_label` and `run_id` identify which run each `EvalRecord` came from; `example_id` is the join key. |
+| Joining two model conditions for paired tests (Week 3) | parent folder `eval/results/<label>/` + `run_id` + `example_id` | `DatasetRow` has no concept of a "condition". The label is the directory each `EvalRecord` lives under (no longer an in-record field), `run_id` distinguishes re-runs, and `example_id` is the join key. |
 | Per-row tier stratification (Weeks 2-4) | `spec.tier` (embedded) | `DatasetRow.source` doesn't carry difficulty. The locked synthetic-fusion eval is the only place tier exists. |
 
 ## Group B — analyses computable from fields already in `DatasetRow` / `EvalRecord`
 
-No new schema fields needed. Everything below uses existing dataset fields plus the eval-schema fields that just identify the row (`example_id`, `model_label`, `spec.tier`).
+No new schema fields needed. Everything below uses existing dataset fields plus the eval-schema fields that just identify the row (`example_id`, `spec.tier`).
 
 | Analysis | Fields consumed |
 |---|---|
@@ -48,22 +46,19 @@ No new schema fields needed. Everything below uses existing dataset fields plus 
 | Judge-classification distribution (Week 2) | `attempts[*].judge_classification` |
 | Speedup mean / median / std per method (Week 2) | `attempts[winning].benchmark.speedup_vs_{eager,inductor}` |
 | Log-speedup distribution stats (Week 2) | derived from speedup fields above |
-| **Paired McNemar test on pass rate** (Week 3) | `final_outcome` from both `model_label`s, joined on `example_id` |
+| **Paired McNemar test on pass rate** (Week 3) | `final_outcome` from both label folders, joined on `example_id` |
 | Cohen's h on pass-rate lift (Week 4) | derived from McNemar inputs |
 | Post-hoc power on observed effect (Week 4) | derived from observed effect size + n |
-| Pre-experiment MDE at locked n (Week 4) | n only (300, or per-tier 105 / 115 / 80) |
-| Paired t-test on Triton compile time (Week 3) | `attempts[winning].latency.compile_ms` (already in `DatasetRow`) — but the Inductor / eager baseline equivalent needs Group A fields |
+| Pre-experiment MDE at locked n (Week 4) | n only (437, or per-tier 103 / 217 / 117) |
+| Triton compile-time descriptive stats (Week 2) | `attempts[winning].latency.compile_ms` |
+| **Paired t-test on log Triton compile time** (Week 3) | `attempts[winning].latency.compile_ms`, joined on `example_id` |
 | Cross-tab outcome × `op_category` × tier (Week 1) | `final_outcome` + `op_category` + `spec.tier` |
 
 ## Sample-size note (recorded once, not recomputed per run)
 
-Locked at **n = 300** for the overall paired McNemar, with proportional tier split **105 / 115 / 80**. At α=0.05 and assuming within-pair correlation ρ=0.7 (realistic when both models share most failure modes), this n detects:
+Locked at **n = 437** for the overall paired McNemar, with the empirical tier split **103 easy / 217 medium / 117 hard** that came out of the spec sampler (post-cleanup, see decision log 2026-05-09). At α=0.05 and within-pair correlation ρ=0.7 (realistic when both models share most failure modes), n=437 has more than the original 300-row plan would have given on every effect size, so the +5/+8/+10pp power table from the original plan is a conservative lower bound.
 
-- +5pp lift: ~61% power (inconclusive results expected)
-- +8pp lift: ~94-98% power
-- +10pp lift: ~99% power
-
-Per-tier inference is underpowered — tier results are reported as **descriptive only**, never as standalone significance tests. This is a deliberate choice (see decision log entry when n was locked).
+Per-tier inference at the medium / hard counts is borderline rather than underpowered — tier results are still reported as **descriptive only** for v1, with the option to upgrade to per-tier McNemar in a follow-up if the headline test is significant.
 
 ## Package layout (preview of task #5)
 

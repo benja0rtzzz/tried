@@ -22,10 +22,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 from shared.logging import get_logger
 from shared.models import EvalSpec
@@ -234,6 +232,8 @@ def run(
 
 
 def main() -> None:
+    from dotenv import load_dotenv
+    load_dotenv()
     parser = argparse.ArgumentParser(
         prog="orchestrator.eval_gen.driver",
         description="Run stage 2 (Codex) + stage 3 (AST + dedup) on sampled specs.",

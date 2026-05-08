@@ -1,8 +1,8 @@
 """
-Entry point for the TRIED orchestrator.
+Entry point for the TRIED orchestrator dataset-generation pipeline.
 
 Usage (from the project root):
-    TRIED_ROLE=orchestrator uv run python -m orchestrator.main
+    TRIED_ROLE=orchestrator uv run python -m orchestrator.dataset.main
 
 Required env vars: see packages/orchestrator/.env
 Optional env vars:
@@ -28,7 +28,7 @@ from shared.dataset import load_corpus_train, load_dataset
 from shared.enums import FinalOutcome, Split
 from shared.logging import get_logger
 
-from orchestrator.agent import run_job
+from orchestrator.dataset.agent import run_job
 from orchestrator.clients.judge_client import RateLimitError
 from orchestrator.clients.verification_client import make_client
 
@@ -61,6 +61,8 @@ def _load_skipped_ids(skipped_path: Path) -> set[str]:
 
 
 def main() -> None:
+    from dotenv import load_dotenv
+    load_dotenv()
     missing = [k for k in _REQUIRED_ENV if not os.getenv(k)]
     if missing:
         _log.error("missing required env vars: %s", ", ".join(missing))

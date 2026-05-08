@@ -212,10 +212,13 @@ def _compute_stats(
     ), n_exceed == 0
 
 
-def _time_fn(fn: types.FunctionType, inputs: list[torch.Tensor]) -> tuple[float, float]:
+def _time_fn(fn: types.FunctionType, inputs: list[torch.Tensor]) -> tuple[float, float, list[float]]:
     """Time fn over _TIMED_ITERS iterations using CUDA events.
 
-    Returns (median_ms, stdev_ms). Warmup of _WARMUP_ITERS runs is done first.
+    Returns (median_ms, stdev_ms, raw_samples_ms). Warmup of
+    _WARMUP_ITERS runs is done first. Raw samples are needed by the
+    eval pipeline for non-parametric paired tests; the dataset pipeline
+    uses median + stdev only.
     """
     with torch.no_grad():
         for _ in range(_WARMUP_ITERS):
@@ -233,7 +236,7 @@ def _time_fn(fn: types.FunctionType, inputs: list[torch.Tensor]) -> tuple[float,
     torch.cuda.synchronize()
 
     times = [starts[i].elapsed_time(ends[i]) for i in range(_TIMED_ITERS)]
-    return statistics.median(times), statistics.stdev(times)
+    return statistics.median(times), statistics.stdev(times), times
 
 
 # ---------------------------------------------------------------------------
@@ -385,9 +388,9 @@ def run_benchmark(
     with torch.no_grad():
         inductor_fn(*inputs)
 
-    triton_med, triton_std = _time_fn(triton_fn, inputs)
-    eager_med, eager_std = _time_fn(torch_fn, inputs)
-    inductor_med, inductor_std = _time_fn(inductor_fn, inputs)
+    triton_med, triton_std, triton_samples = _time_fn(triton_fn, inputs)
+    eager_med, eager_std, eager_samples = _time_fn(torch_fn, inputs)
+    inductor_med, inductor_std, inductor_samples = _time_fn(inductor_fn, inputs)
 
     return BenchmarkResponse(
         triton_ms=triton_med,
@@ -398,4 +401,7 @@ def run_benchmark(
         triton_std_ms=triton_std,
         eager_std_ms=eager_std,
         inductor_std_ms=inductor_std,
+        triton_samples_ms=triton_samples,
+        eager_samples_ms=eager_samples,
+        inductor_samples_ms=inductor_samples,
     )

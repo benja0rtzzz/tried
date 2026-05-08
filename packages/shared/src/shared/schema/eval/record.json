@@ -2,28 +2,22 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tried.local/schemas/eval-record.json",
   "title": "TRIED Eval Record",
-  "description": "Per-example result of one eval run on one accepted eval-set row. Eval-specific bookkeeping: model_label and run_id identify the condition, embedded EvalSpec makes the row self-contained for analysis, baseline_compile carries cold compile times for the eager/Inductor baselines, and each attempt's benchmark block carries the full 100-iter timing arrays needed for non-parametric paired tests (Wilcoxon signed-rank, bootstrap CIs) and IQR/quartile descriptive stats. The agent loop that produces these records is identical to dataset collection (same prompt, same retry budget N=5, same judge, same tolerance) — only the input set and output destination differ.",
+  "description": "Per-example result of one eval run on one accepted eval-set row. Eval-specific bookkeeping: run_id identifies the run, embedded EvalSpec makes the row self-contained for analysis, and each attempt's benchmark block carries the full 100-iter timing arrays needed for non-parametric paired tests (Wilcoxon signed-rank, bootstrap CIs) and IQR/quartile descriptive stats. The generator condition is identified by the parent directory `eval/results/<label>/`, not by an in-record field. The agent loop that produces these records is identical to dataset collection (same prompt, same retry budget N=5, same judge, same tolerance) — only the input set and output destination differ.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "example_id",
-    "model_label",
     "run_id",
     "spec",
     "attempts",
     "final_outcome",
-    "final_winning_attempt_n",
-    "baseline_compile"
+    "final_winning_attempt_n"
   ],
   "properties": {
     "example_id": {
       "type": "string",
       "format": "uuid",
-      "description": "Matches EvalCorpusRecord.example_id. Joining key for paired McNemar / Wilcoxon tests across two model_labels."
-    },
-    "model_label": {
-      "type": "string",
-      "description": "Identifies the generator condition for this row. Examples: 'qwen2.5-coder:14b-vanilla', 'qwen2.5-coder:14b-ft-v1'. The same model_label may appear across multiple run_ids if the eval is re-run; analysis tools should aggregate by (model_label, run_id) and pick the run_id explicitly."
+      "description": "Matches EvalCorpusRecord.example_id. Joining key for paired McNemar / Wilcoxon tests across two label folders."
     },
     "run_id": {
       "type": "string",
@@ -55,23 +49,6 @@
       "type": ["integer", "null"],
       "minimum": 0,
       "description": "The attempt_n whose result is recorded in final_outcome. Null iff final_outcome is in {correctness_failed, all_attempts_failed}."
-    },
-    "baseline_compile": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["eager_first_call_ms", "inductor_first_call_ms"],
-      "properties": {
-        "eager_first_call_ms": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Wall time of the first eager invocation of pytorch_code on this run, in milliseconds. Includes CUDA context init effects on the first row of a run; subsequent rows see only kernel-launch overhead."
-        },
-        "inductor_first_call_ms": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Wall time of the first torch.compile(backend='inductor') invocation on this run, in milliseconds. Dominated by Inductor cold-compile (typically 60–120 s). This is the headline 'compile cost' number for the experiment."
-        }
-      }
     }
   },
   "$defs": {
