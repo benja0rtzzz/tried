@@ -3,10 +3,10 @@ Agent loop for the TRIED orchestrator.
 
 Public API
 ----------
-run_job(record, client, data_dir) -> bool
-    Runs the full preflight → generate → compile → run → judge retry loop for
-    one corpus record. Returns True on completion (written to dataset.jsonl),
-    or False if the preflight check failed (written to skipped.jsonl).
+run_job(record, client, data_dir) -> None
+    Runs the generate → compile → run → judge retry loop for one corpus record
+    and writes the result to dataset.jsonl. All records loaded by main.py have
+    already passed the eager-vs-Inductor preflight check (see preflight_driver).
     Transport exceptions propagate to the caller.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import httpx
 
-from shared.dataset import append_dataset_row, append_skipped
+from shared.dataset import append_dataset_row
 from shared.enums import (
     CompileStatus,
     CorrectnessStatus,
@@ -38,7 +38,6 @@ from shared.models import (
 from shared.verification.api import (
     CompileRequest,
     CompileResponse,
-    PreflightRequest,
     RunRequest,
     RunResponse,
 )
@@ -57,32 +56,17 @@ def run_job(
     record: CorpusRecord,
     client: VerificationClient,
     data_dir: Path,
-) -> bool:
-    """Run the full agent loop for one corpus record.
+) -> None:
+    """Run the agent loop for one corpus record and write to dataset.jsonl.
 
-    Returns True if the record was written to dataset.jsonl, False if preflight
-    failed and it was written to skipped.jsonl instead.
+    All records reaching this function have already passed the eager-vs-Inductor
+    preflight check (run by preflight_driver before the agent loop starts).
     Transport exceptions propagate to the caller.
     """
     dataset_path = data_dir / "dataset.jsonl"
-    skipped_path = data_dir / "skipped.jsonl"
 
     policy = _select_policy(record.input_dtypes, record.op_category)
     _log.info("job start  example_id=%s  policy=%s", record.example_id, policy.value)
-
-    # --- Preflight ---
-    preflight = client.preflight(PreflightRequest(
-        pytorch_code=record.pytorch_code,
-        input_shapes=record.input_shapes,
-        input_dtypes=record.input_dtypes,
-        rng_seed=record.rng_seed,
-        tolerance_policy=policy,
-    ))
-    if not preflight.passed:
-        reason = preflight.error_message or "preflight: eager vs inductor disagreement"
-        _log.warning("preflight failed  example_id=%s  reason=%s", record.example_id, reason)
-        append_skipped(skipped_path, record.example_id, reason)
-        return False
 
     # --- Retry loop ---
     attempts: list[Attempt] = []
@@ -177,8 +161,6 @@ def run_job(
         attempts=attempts,
         final_outcome=final_outcome,
     ))
-
-    return True
 
 
 # ---------------------------------------------------------------------------

@@ -14,7 +14,6 @@ import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from multiprocessing.pool import Pool as MpPool
 from typing import Any, Optional
 
 import torch
@@ -89,34 +88,39 @@ def _get_worker() -> MpPool:
     return _worker
 
 
+def _kill_worker() -> None:
+    """Terminate the current GPU worker process. The next _get_worker() spawns a fresh one."""
+    global _worker
+    with _worker_lock:
+        if _worker is not None:
+            _worker.terminate()
+            _worker.join()
+            _worker = None
+
+
 def _isolated(fn, **kwargs):
     """Call fn(**kwargs) in the persistent worker subprocess.
 
-    Terminates and respawns the worker on ProcessError (CUDA crash) or timeout.
-    On timeout, raises TimeoutError without retrying — the GPU state is unknown.
-    On ProcessError, respawns and retries once with a fresh CUDA context.
+    The worker is ALWAYS terminated after each call (in the finally block) so every
+    GPU operation starts with a fresh CUDA context. This prevents a cudaErrorIllegalAddress
+    from a bad Triton kernel from corrupting subsequent calls.
+
+    The ~2 s spawn overhead per call is acceptable: preflight/run calls take 30-300 s
+    and the spawn cost is <1% of that.
+
+    Raises TimeoutError on timeout; re-raises any other exception from the worker as-is.
+    No retry on ProcessError — the kernel is suspect, and the next call gets a fresh worker.
     """
-    global _worker
     try:
         return _get_worker().apply_async(fn, kwds=kwargs).get(timeout=_WORKER_TIMEOUT)
     except mp.TimeoutError:
-        _log.error(
-            "worker timed out after %.0fs; terminating and respawning", _WORKER_TIMEOUT
-        )
-        with _worker_lock:
-            if _worker is not None:
-                _worker.terminate()
-                _worker.join()
-                _worker = None
+        _log.error("worker timed out after %.0fs", _WORKER_TIMEOUT)
         raise TimeoutError(f"GPU task timed out after {_WORKER_TIMEOUT:.0f}s")
-    except mp.ProcessError:
-        _log.warning("worker process died; respawning")
-        with _worker_lock:
-            if _worker is not None:
-                _worker.terminate()
-                _worker.join()
-                _worker = None
-        return _get_worker().apply_async(fn, kwds=kwargs).get(timeout=_WORKER_TIMEOUT)
+    except mp.ProcessError as exc:
+        _log.warning("worker process died unexpectedly: %s", exc)
+        raise RuntimeError(f"worker process died: {exc}") from exc
+    finally:
+        _kill_worker()
 
 
 @app.middleware("http")
@@ -167,7 +171,7 @@ def preflight_endpoint(req: PreflightRequest):
             rng_seed=req.rng_seed,
             tolerance_policy=req.tolerance_policy,
         )
-    except TimeoutError as e:
+    except (TimeoutError, RuntimeError) as e:
         return PreflightResponse(passed=False, error_message=str(e))
 
 
@@ -194,7 +198,7 @@ def run_endpoint(req: RunRequest):
             rng_seed=req.rng_seed,
             tolerance_policy=req.tolerance_policy,
         )
-    except TimeoutError as e:
+    except (TimeoutError, RuntimeError) as e:
         return RunResponse(
             correctness_status=CorrectnessStatus.FAILED,
             error_message=str(e),
@@ -255,9 +259,4 @@ async def job_status_endpoint(job_id: str):
 
 @app.on_event("shutdown")
 async def _shutdown_worker():
-    global _worker
-    with _worker_lock:
-        if _worker is not None:
-            _worker.terminate()
-            _worker.join()
-            _worker = None
+    _kill_worker()

@@ -7,20 +7,23 @@ Usage (from the project root):
 Required env vars: see packages/orchestrator/.env
 Optional env vars:
     TRIED_DATA_DIR    — path to the data directory (default: data/)
-    TRIED_CORPUS_PATH — path to the corpus JSONL (default: data/corpus_gen/with_code.jsonl)
-                        Each row must have a "candidate" key containing a CorpusRecord.
+    TRIED_CORPUS_PATH — path to the preflight-safe corpus JSONL
+                        (default: data/preflight_safe.jsonl)
+                        Run orchestrator.dataset.preflight_driver first to
+                        produce this file.
 
-Resume behaviour: on startup, already-completed and preflight-skipped
-example_ids are loaded from dataset.jsonl / skipped.jsonl and filtered out so
-no example is processed twice. Hitting an OpenAI rate limit stops the run
-cleanly with exit code 0; restart the process once the rate-limit window
-clears (or after topping up credits).
+Resume behaviour: on startup, already-completed example_ids are loaded from
+dataset.jsonl and filtered out so no example is processed twice. Preflight is
+handled upstream by the preflight_driver — this pipeline assumes every row in
+TRIED_CORPUS_PATH already passed the eager-vs-Inductor sanity check.
+Hitting an OpenAI rate limit stops the run cleanly with exit code 0; restart
+the process once the rate-limit window clears (or after topping up credits).
 """
 
 from __future__ import annotations
 
-import json
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -36,6 +39,16 @@ from orchestrator.clients.verification_client import make_client
 
 _log = get_logger(__name__)
 
+_stop_requested = False
+
+
+def _handle_sigint(signum: int, frame: object) -> None:
+    global _stop_requested
+    if not _stop_requested:
+        _stop_requested = True
+        _log.info("interrupt received — finishing current example then stopping cleanly")
+
+
 _REQUIRED_ENV = [
     "VERIFICATION_SERVER_URL",
     "VERIFICATION_API_KEY",
@@ -47,7 +60,7 @@ def _load_completed_ids(dataset_path: Path) -> set[str]:
 
 
 def _load_corpus(corpus_path: Path) -> list[CorpusRecord]:
-    """Load with_code.jsonl, extracting the CorpusRecord from each row's 'candidate' field."""
+    """Load preflight_safe.jsonl — each line is a CorpusRecord directly."""
     records: list[CorpusRecord] = []
     with corpus_path.open() as f:
         for i, line in enumerate(f, start=1):
@@ -55,26 +68,10 @@ def _load_corpus(corpus_path: Path) -> list[CorpusRecord]:
             if not line:
                 continue
             try:
-                row = json.loads(line)
-                records.append(CorpusRecord.model_validate(row["candidate"]))
-            except (json.JSONDecodeError, KeyError, Exception) as exc:
+                records.append(CorpusRecord.model_validate_json(line))
+            except Exception as exc:
                 raise ValueError(f"{corpus_path}:{i} — {exc}") from exc
     return records
-
-
-def _load_skipped_ids(skipped_path: Path) -> set[str]:
-    if not skipped_path.exists():
-        return set()
-    ids: set[str] = set()
-    with skipped_path.open() as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                try:
-                    ids.add(json.loads(line)["example_id"])
-                except (json.JSONDecodeError, KeyError):
-                    pass
-    return ids
 
 
 def main() -> None:
@@ -86,9 +83,15 @@ def main() -> None:
         sys.exit(1)
 
     data_dir = Path(os.getenv("TRIED_DATA_DIR", "data"))
-    corpus_path = Path(os.getenv("TRIED_CORPUS_PATH", data_dir / "corpus_gen" / "with_code.jsonl"))
+    corpus_path = Path(os.getenv("TRIED_CORPUS_PATH", data_dir / "preflight_safe.jsonl"))
     dataset_path = data_dir / "dataset.jsonl"
-    skipped_path = data_dir / "skipped.jsonl"
+
+    if not corpus_path.exists():
+        _log.error(
+            "corpus not found: %s — run orchestrator.dataset.preflight_driver first",
+            corpus_path,
+        )
+        sys.exit(1)
 
     _log.info("loading corpus from %s", corpus_path)
     all_records = _load_corpus(corpus_path)
@@ -99,19 +102,20 @@ def main() -> None:
         len(all_records),
     )
 
-    # --- Resume filter ---
-    already_done = _load_completed_ids(dataset_path) | _load_skipped_ids(skipped_path)
+    # --- Resume filter (completed examples only — preflight is pre-done) ---
+    already_done = _load_completed_ids(dataset_path)
     if already_done:
         _log.info(
-            "resuming: %d example(s) already processed — skipping", len(already_done)
+            "resuming: %d example(s) already completed — skipping", len(already_done)
         )
     records = [r for r in records if r.example_id not in already_done]
     _log.info("%d record(s) remaining", len(records))
 
+    signal.signal(signal.SIGINT, _handle_sigint)
+
     client = make_client()
 
     completed = 0
-    preflight_skipped = 0
     transport_errors = 0
 
     for i, record in enumerate(records):
@@ -122,7 +126,7 @@ def main() -> None:
             record.example_id,
         )
         try:
-            ok = run_job(record, client, data_dir)
+            run_job(record, client, data_dir)
         except RateLimitError as exc:
             _log.error("OpenAI rate limit hit: %s", exc)
             _log.error(
@@ -151,16 +155,20 @@ def main() -> None:
             transport_errors += 1
             continue
 
-        if ok:
-            completed += 1
-        else:
-            preflight_skipped += 1
+        completed += 1
+
+        if _stop_requested:
+            _log.info(
+                "stopping after interrupt — %d example(s) completed this run; "
+                "restart to continue from here",
+                completed,
+            )
+            sys.exit(0)
 
     # --- Summary ---
     _log.info("=== run complete ===")
     _log.info("total records:      %d", len(records))
     _log.info("completed:          %d", completed)
-    _log.info("preflight skipped:  %d", preflight_skipped)
     _log.info("transport errors:   %d", transport_errors)
 
 
