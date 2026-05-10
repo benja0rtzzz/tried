@@ -3,7 +3,6 @@ Shared pytest fixtures and env setup for the TRIED test suite.
 Loads packages/orchestrator/.env so tests can run without manually sourcing it.
 """
 import os
-import time
 from pathlib import Path
 
 import pytest
@@ -22,12 +21,6 @@ os.environ.setdefault("TRIED_ROLE", "orchestrator")
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
-
-@pytest.fixture
-def gemini_throttle():
-    """Pause after the test to stay within the 5 RPM free-tier limit."""
-    yield
-    time.sleep(15)
 
 
 @pytest.fixture

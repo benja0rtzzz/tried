@@ -20,12 +20,11 @@ from __future__ import annotations
 import json
 import os
 import sys
-from collections import Counter
 from pathlib import Path
 
 from pydantic import ValidationError
 from shared.dataset import load_corpus_train, load_dataset
-from shared.enums import FinalOutcome, Split
+from shared.enums import Split
 from shared.logging import get_logger
 
 from orchestrator.dataset.agent import run_job
@@ -35,7 +34,6 @@ from orchestrator.clients.verification_client import make_client
 _log = get_logger(__name__)
 
 _REQUIRED_ENV = [
-    "OPENAI_API_KEY",
     "VERIFICATION_SERVER_URL",
     "VERIFICATION_API_KEY",
 ]
@@ -93,7 +91,7 @@ def main() -> None:
 
     client = make_client()
 
-    outcome_counts: Counter[str] = Counter()
+    completed = 0
     preflight_skipped = 0
     transport_errors = 0
 
@@ -105,9 +103,8 @@ def main() -> None:
             record.example_id,
         )
         try:
-            outcome = run_job(record, client, data_dir)
+            ok = run_job(record, client, data_dir)
         except RateLimitError as exc:
-            completed = sum(outcome_counts.values())
             _log.error("OpenAI rate limit hit: %s", exc)
             _log.error(
                 "stopping cleanly — %d example(s) completed this run; "
@@ -135,25 +132,17 @@ def main() -> None:
             transport_errors += 1
             continue
 
-        if outcome is None:
-            preflight_skipped += 1
+        if ok:
+            completed += 1
         else:
-            outcome_counts[outcome.value] += 1
+            preflight_skipped += 1
 
     # --- Summary ---
-    total = len(records)
-    completed = total - preflight_skipped - transport_errors
     _log.info("=== run complete ===")
-    _log.info("total records:      %d", total)
+    _log.info("total records:      %d", len(records))
     _log.info("completed:          %d", completed)
     _log.info("preflight skipped:  %d", preflight_skipped)
     _log.info("transport errors:   %d", transport_errors)
-    if outcome_counts:
-        _log.info("outcomes:")
-        for outcome in FinalOutcome:
-            count = outcome_counts.get(outcome.value, 0)
-            if count:
-                _log.info("  %-45s %d", outcome.value, count)
 
 
 if __name__ == "__main__":

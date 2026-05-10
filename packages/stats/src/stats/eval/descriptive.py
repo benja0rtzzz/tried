@@ -162,10 +162,3 @@ def triton_compile_stats(rows: list[EvalRecord]) -> dict:
     return {"triton_compile_ms": _describe(triton_compile_ms)}
 
 
-def judge_classification_dist(rows: list[EvalRecord]) -> dict:
-    """Counts per JudgeClassification across all attempts in the run."""
-    c: Counter[str] = Counter()
-    for r in rows:
-        for a in r.attempts:
-            c[a.judge_classification.value] += 1
-    return dict(c)

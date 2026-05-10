@@ -1,11 +1,7 @@
 """Eval-side raw runner. Single attempt per row, no judge calls.
 
-Unlike the dataset agent loop (which uses up to 5 judge-assisted retries
-to collect SFT data), the eval pipeline measures raw model capability:
-one shot, no feedback. The `judge_classification` field is derived from
-compile / correctness / benchmark signals using the same threshold rules
-the judge prompt enforces (see prompts/judge/judge_system.txt), so the
-schema stays consistent and the stats analyses still work.
+The eval pipeline measures raw model capability: one shot, no feedback.
+final_outcome is derived directly from compile / correctness / benchmark results.
 
 Inputs:  EvalCorpusRecord rows from the locked holdout set.
 Outputs: EvalRecord rows (one attempt per row).
@@ -21,7 +17,6 @@ from shared.enums import (
     CompileStatus,
     CorrectnessStatus,
     FinalOutcome,
-    JudgeClassification,
 )
 from shared.logging import get_logger
 from shared.models import (
@@ -30,9 +25,9 @@ from shared.models import (
     EvalAttempt,
     EvalBenchmark,
     EvalCorpusRecord,
+    EvalLatency,
     EvalRecord,
-    Latency,
-    Tokens,
+    EvalTokens,
 )
 from shared.verification.api import (
     BenchmarkRequest,
@@ -49,12 +44,6 @@ from orchestrator.clients.verification_client import VerificationClient
 
 _log = get_logger(__name__)
 
-_SUCCESS_MAP: dict[JudgeClassification, FinalOutcome] = {
-    JudgeClassification.CORRECT_AND_FASTER:               FinalOutcome.COMPILED_CORRECT_FASTER_THAN_INDUCTOR,
-    JudgeClassification.CORRECT_AND_COMPETITIVE:          FinalOutcome.COMPILED_CORRECT_PARITY,
-    JudgeClassification.CORRECT_BUT_SLOWER_THAN_INDUCTOR: FinalOutcome.COMPILED_CORRECT_SLOW,
-}
-
 
 def run_eval_job(
     record: EvalCorpusRecord,
@@ -66,9 +55,10 @@ def run_eval_job(
     on completion, or None if /preflight didn't pass on this run.
 
     `model_label` is used only for logging and is the parent directory the
-    caller writes to; it is no longer embedded in the record.
+    caller writes to; it is not embedded in the record.
 
-    Transport exceptions propagate to the caller."""
+    Transport exceptions propagate to the caller.
+    """
     spec = record.spec
     _log.info(
         "eval job start  example_id=%s  form=%s  model=%s",
@@ -135,30 +125,22 @@ def run_eval_job(
                 rng_seed=spec.rng_seed,
             ))
 
-    classification = _derive_classification(compile_resp, run_resp, benchmark_resp)
     attempt = _build_eval_attempt(
         gen=gen,
         compile_resp=compile_resp,
         run_resp=run_resp,
         benchmark_resp=benchmark_resp,
-        classification=classification,
         compile_ms=compile_ms,
         run_ms=run_ms,
         timestamp=timestamp,
         tolerance_policy=spec.tolerance_policy,
     )
 
-    final_outcome = _SUCCESS_MAP.get(classification)
-    if final_outcome is None:
-        if classification == JudgeClassification.CORRECTNESS_FAILED_NUMERIC:
-            final_outcome = FinalOutcome.CORRECTNESS_FAILED
-        else:
-            final_outcome = FinalOutcome.ALL_ATTEMPTS_FAILED
-    winning_n = attempt.attempt_n if classification in _SUCCESS_MAP else None
+    final_outcome, winning_n = _derive_outcome(compile_resp, run_resp, benchmark_resp, attempt.attempt_n)
 
     _log.info(
-        "eval job done  example_id=%s  classification=%s  outcome=%s",
-        record.example_id, classification.value, final_outcome.value,
+        "eval job done  example_id=%s  outcome=%s",
+        record.example_id, final_outcome.value,
     )
 
     return EvalRecord(
@@ -172,32 +154,29 @@ def run_eval_job(
 
 
 # ---------------------------------------------------------------------------
-# Classification derivation (mirrors prompts/judge/judge_system.txt rules)
+# Helpers
 # ---------------------------------------------------------------------------
 
-def _derive_classification(
+def _derive_outcome(
     compile_resp: CompileResponse,
     run_resp: RunResponse | None,
     benchmark_resp: BenchmarkResponse | None,
-) -> JudgeClassification:
+    attempt_n: int,
+) -> tuple[FinalOutcome, int | None]:
     eff_status, _ = _effective_compile(compile_resp, run_resp)
     if eff_status == CompileStatus.FAILED:
-        return JudgeClassification.OTHER
+        return FinalOutcome.ALL_ATTEMPTS_FAILED, None
     if run_resp is None or run_resp.correctness_status != CorrectnessStatus.PASSED:
-        return JudgeClassification.CORRECTNESS_FAILED_NUMERIC
-    if benchmark_resp is None or benchmark_resp.speedup_vs_inductor is None:
-        return JudgeClassification.OTHER
-    speedup = benchmark_resp.speedup_vs_inductor
-    if speedup < 1.0:
-        return JudgeClassification.CORRECT_BUT_SLOWER_THAN_INDUCTOR
-    if speedup < 1.1:
-        return JudgeClassification.CORRECT_AND_COMPETITIVE
-    return JudgeClassification.CORRECT_AND_FASTER
+        return FinalOutcome.CORRECTNESS_FAILED, None
+    if benchmark_resp is None:
+        return FinalOutcome.ALL_ATTEMPTS_FAILED, None
+    speedup = benchmark_resp.speedup_vs_inductor or 0.0
+    if speedup >= 1.1:
+        return FinalOutcome.COMPILED_CORRECT_FASTER_THAN_INDUCTOR, attempt_n
+    if speedup >= 1.0:
+        return FinalOutcome.COMPILED_CORRECT_PARITY, attempt_n
+    return FinalOutcome.COMPILED_CORRECT_SLOW, attempt_n
 
-
-# ---------------------------------------------------------------------------
-# Helpers (parallel to orchestrator.dataset.agent's; intentional duplication)
-# ---------------------------------------------------------------------------
 
 def _effective_compile(
     compile_resp: CompileResponse,
@@ -214,7 +193,6 @@ def _build_eval_attempt(
     compile_resp: CompileResponse,
     run_resp: RunResponse | None,
     benchmark_resp: BenchmarkResponse | None,
-    classification: JudgeClassification,
     compile_ms: int,
     run_ms: int | None,
     timestamp: datetime,
@@ -259,19 +237,14 @@ def _build_eval_attempt(
         compile=CompileResult(status=eff_compile_status, error=eff_compile_error),
         correctness=correctness,
         benchmark=benchmark,
-        judge_classification=classification,
-        judge_fix_suggestion=None,
-        latency=Latency(
+        latency=EvalLatency(
             generator_ms=gen.latency_ms,
-            judge_ms=0,
             compile_ms=compile_ms,
             run_ms=run_ms,
         ),
-        tokens=Tokens(
+        tokens=EvalTokens(
             generator_prompt=gen.prompt_tokens,
             generator_completion=gen.completion_tokens,
-            judge_prompt=0,
-            judge_completion=0,
         ),
         timestamp=timestamp,
     )
