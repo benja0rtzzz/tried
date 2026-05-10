@@ -1,6 +1,4 @@
-"""
-Judge prompt loader. Do not modify the .txt files once data collection has started.
-"""
+"""Judge prompt loader."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,8 +20,6 @@ class AttemptContext(TypedDict):
     correctness_status: str | None # "passed" | "failed" | None
     max_abs_diff:       float | None
     pct_exceeding:      float | None
-    speedup_vs_eager:   float | None
-    speedup_vs_inductor: float | None
     fix_suggestion:     str | None  # None for the current attempt
 
 
@@ -43,15 +39,6 @@ def _render_attempt(a: AttemptContext, is_current: bool) -> str:
                 f" pct_exceeding={a['pct_exceeding']:.1f}%"
             )
 
-    benchmark_line = ""
-    if a["speedup_vs_inductor"] is not None:
-        benchmark_line = (
-            f"Benchmark: speedup_vs_eager={a['speedup_vs_eager']:.2f}x,"
-            f" speedup_vs_inductor={a['speedup_vs_inductor']:.2f}x"
-        )
-    elif a["correctness_status"] == "passed":
-        benchmark_line = "Benchmark: n/a"
-
     fix_line = ""
     if a["fix_suggestion"]:
         fix_line = f"Fix suggested: {a['fix_suggestion']}"
@@ -61,7 +48,7 @@ def _render_attempt(a: AttemptContext, is_current: bool) -> str:
         f"Triton code:\n{a['triton_code']}",
         compile_line,
     ]
-    for line in (correctness_line, benchmark_line, fix_line):
+    for line in (correctness_line, fix_line):
         if line:
             parts.append(line)
 

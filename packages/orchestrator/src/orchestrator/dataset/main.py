@@ -6,7 +6,9 @@ Usage (from the project root):
 
 Required env vars: see packages/orchestrator/.env
 Optional env vars:
-    TRIED_DATA_DIR   — path to the data directory (default: data/)
+    TRIED_DATA_DIR    — path to the data directory (default: data/)
+    TRIED_CORPUS_PATH — path to the corpus JSONL (default: data/corpus_gen/with_code.jsonl)
+                        Each row must have a "candidate" key containing a CorpusRecord.
 
 Resume behaviour: on startup, already-completed and preflight-skipped
 example_ids are loaded from dataset.jsonl / skipped.jsonl and filtered out so
@@ -20,13 +22,13 @@ from __future__ import annotations
 import json
 import os
 import sys
-from collections import Counter
 from pathlib import Path
 
 from pydantic import ValidationError
-from shared.dataset import load_corpus_train, load_dataset
-from shared.enums import FinalOutcome, Split
+from shared.dataset import load_dataset
+from shared.enums import Split
 from shared.logging import get_logger
+from shared.models import CorpusRecord
 
 from orchestrator.dataset.agent import run_job
 from orchestrator.clients.judge_client import RateLimitError
@@ -35,7 +37,6 @@ from orchestrator.clients.verification_client import make_client
 _log = get_logger(__name__)
 
 _REQUIRED_ENV = [
-    "OPENAI_API_KEY",
     "VERIFICATION_SERVER_URL",
     "VERIFICATION_API_KEY",
 ]
@@ -43,6 +44,22 @@ _REQUIRED_ENV = [
 
 def _load_completed_ids(dataset_path: Path) -> set[str]:
     return {row.example_id for row in load_dataset(dataset_path)}
+
+
+def _load_corpus(corpus_path: Path) -> list[CorpusRecord]:
+    """Load with_code.jsonl, extracting the CorpusRecord from each row's 'candidate' field."""
+    records: list[CorpusRecord] = []
+    with corpus_path.open() as f:
+        for i, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                records.append(CorpusRecord.model_validate(row["candidate"]))
+            except (json.JSONDecodeError, KeyError, Exception) as exc:
+                raise ValueError(f"{corpus_path}:{i} — {exc}") from exc
+    return records
 
 
 def _load_skipped_ids(skipped_path: Path) -> set[str]:
@@ -69,12 +86,12 @@ def main() -> None:
         sys.exit(1)
 
     data_dir = Path(os.getenv("TRIED_DATA_DIR", "data"))
-    corpus_path = data_dir / "corpus_train.jsonl"
+    corpus_path = Path(os.getenv("TRIED_CORPUS_PATH", data_dir / "corpus_gen" / "with_code.jsonl"))
     dataset_path = data_dir / "dataset.jsonl"
     skipped_path = data_dir / "skipped.jsonl"
 
     _log.info("loading corpus from %s", corpus_path)
-    all_records = load_corpus_train(corpus_path)
+    all_records = _load_corpus(corpus_path)
     records = [r for r in all_records if r.split == Split.TRAIN]
     _log.info(
         "%d train records loaded  (total corpus: %d)",
@@ -93,7 +110,7 @@ def main() -> None:
 
     client = make_client()
 
-    outcome_counts: Counter[str] = Counter()
+    completed = 0
     preflight_skipped = 0
     transport_errors = 0
 
@@ -105,9 +122,8 @@ def main() -> None:
             record.example_id,
         )
         try:
-            outcome = run_job(record, client, data_dir)
+            ok = run_job(record, client, data_dir)
         except RateLimitError as exc:
-            completed = sum(outcome_counts.values())
             _log.error("OpenAI rate limit hit: %s", exc)
             _log.error(
                 "stopping cleanly — %d example(s) completed this run; "
@@ -135,25 +151,17 @@ def main() -> None:
             transport_errors += 1
             continue
 
-        if outcome is None:
-            preflight_skipped += 1
+        if ok:
+            completed += 1
         else:
-            outcome_counts[outcome.value] += 1
+            preflight_skipped += 1
 
     # --- Summary ---
-    total = len(records)
-    completed = total - preflight_skipped - transport_errors
     _log.info("=== run complete ===")
-    _log.info("total records:      %d", total)
+    _log.info("total records:      %d", len(records))
     _log.info("completed:          %d", completed)
     _log.info("preflight skipped:  %d", preflight_skipped)
     _log.info("transport errors:   %d", transport_errors)
-    if outcome_counts:
-        _log.info("outcomes:")
-        for outcome in FinalOutcome:
-            count = outcome_counts.get(outcome.value, 0)
-            if count:
-                _log.info("  %-45s %d", outcome.value, count)
 
 
 if __name__ == "__main__":

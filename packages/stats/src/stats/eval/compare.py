@@ -23,7 +23,6 @@ def _describe_sections(rows) -> dict:
         "speedup_summary":          descriptive.speedup_summary(rows),
         "timing_iqr":               descriptive.timing_iqr(rows),
         "triton_compile_stats":     descriptive.triton_compile_stats(rows),
-        "judge_classification_dist": descriptive.judge_classification_dist(rows),
     }
 
 

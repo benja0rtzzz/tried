@@ -1,39 +1,38 @@
 """
-OpenAI client for the judge (o4-mini).
-Classifies each attempt and returns a targeted fix suggestion.
-Env vars required: OPENAI_API_KEY.
+Codex CLI client for the judge (profile gpt-5-3-codex).
 
-Raises RateLimitError when the OpenAI quota is exhausted (HTTP 429). The
-orchestrator main loop catches this and stops cleanly so the run can be resumed.
+Classifies each attempt and returns a targeted fix suggestion. Talks to a
+local `codex exec` subprocess with --output-schema for structured output
+and --json for token-usage extraction.
+
+Raises RateLimitError when the CLI returns a rate-limit / quota error so
+the orchestrator main loop can stop cleanly and resume later.
 """
 
 from __future__ import annotations
 
-import os
+import json
+import shutil
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
-import openai
 from pydantic import BaseModel
 from shared.enums import JudgeClassification
 
 from orchestrator.prompts.judge import SYSTEM, AttemptContext, build_user_prompt
 
-_MODEL = "o4-mini-2025-04-16"
+_PROFILE = "gpt-5-3-codex"
+_TIMEOUT_S = 180
+
+_RATE_LIMIT_HINTS = ("rate limit", "rate_limit", "quota", "429", "too many requests")
 
 
 class RateLimitError(Exception):
-    """OpenAI rate limit or quota exhausted."""
-
-
-_client: openai.OpenAI | None = None
-
-
-def _get_client() -> openai.OpenAI:
-    global _client
-    if _client is None:
-        _client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    return _client
+    """Codex CLI hit a rate-limit / quota wall."""
 
 
 class _JudgeResponse(BaseModel):
@@ -50,41 +49,128 @@ class JudgeResult:
     latency_ms: int
 
 
+def _enforce_strict_schema(node: Any) -> None:
+    """Add additionalProperties:false to every object node — required by
+    the strict structured-output validator the codex CLI proxies to."""
+    if isinstance(node, dict):
+        if node.get("type") == "object" or "properties" in node:
+            node.setdefault("additionalProperties", False)
+        for v in node.values():
+            _enforce_strict_schema(v)
+    elif isinstance(node, list):
+        for v in node:
+            _enforce_strict_schema(v)
+
+
+_schema_cache: Path | None = None
+
+
+def _schema_path() -> Path:
+    global _schema_cache
+    if _schema_cache is None or not _schema_cache.exists():
+        schema = _JudgeResponse.model_json_schema()
+        _enforce_strict_schema(schema)
+        f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump(schema, f)
+        f.flush()
+        _schema_cache = Path(f.name)
+    return _schema_cache
+
+
+def _build_prompt(pytorch_code: str, attempts: list[AttemptContext]) -> str:
+    user_msg = build_user_prompt(pytorch_code, attempts)
+    return f"<system>\n{SYSTEM}\n</system>\n\n<user>\n{user_msg}\n</user>"
+
+
+def _is_rate_limit(stderr: str) -> bool:
+    s = stderr.lower()
+    return any(h in s for h in _RATE_LIMIT_HINTS)
+
+
+def _parse_usage(jsonl_stdout: str) -> tuple[int, int]:
+    in_tokens = 0
+    out_tokens = 0
+    for line in jsonl_stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") == "turn.completed":
+            usage = event.get("usage") or {}
+            in_tokens = int(usage.get("input_tokens") or 0)
+            out_tokens = int(usage.get("output_tokens") or 0)
+    return in_tokens, out_tokens
+
+
 def judge(
     pytorch_code: str,
     attempts: list[AttemptContext],
 ) -> JudgeResult:
-    """Call the o4-mini judge and return a classification with optional fix advice.
+    """Call the codex CLI judge and return a classification with optional fix advice.
 
     attempts is the full list of attempt contexts in order; the last entry is
     the current attempt being judged.
     """
-    user_msg = build_user_prompt(pytorch_code, attempts)
+    if shutil.which("codex") is None:
+        raise RuntimeError("codex CLI not found on PATH")
 
-    t0 = time.monotonic()
-    try:
-        response = _get_client().beta.chat.completions.parse(
-            model=_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM},
-                {"role": "user", "content": user_msg},
-            ],
-            response_format=_JudgeResponse,
-            reasoning_effort="high",
-        )
-    except openai.RateLimitError as exc:
-        raise RateLimitError(f"OpenAI rate limit exceeded: {exc}") from exc
-    latency_ms = int((time.monotonic() - t0) * 1000)
+    prompt = _build_prompt(pytorch_code, attempts)
 
-    parsed = response.choices[0].message.parsed
-    if parsed is None:
-        raise RuntimeError("Judge response could not be parsed")
+    with tempfile.TemporaryDirectory() as td:
+        out_path = Path(td) / "last_message.txt"
+        cmd = [
+            "codex", "exec",
+            "--profile", _PROFILE,
+            "--skip-git-repo-check",
+            "--ephemeral",
+            "--sandbox", "read-only",
+            "--output-schema", str(_schema_path()),
+            "--output-last-message", str(out_path),
+            "--json",
+            "--color", "never",
+            prompt,
+        ]
 
-    usage = response.usage
+        t0 = time.monotonic()
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"codex exec timed out after {_TIMEOUT_S}s") from exc
+        latency_ms = int((time.monotonic() - t0) * 1000)
+
+        if proc.returncode != 0:
+            if _is_rate_limit(proc.stderr):
+                raise RateLimitError(f"codex CLI rate limit: {proc.stderr[-300:]}")
+            raise RuntimeError(
+                f"codex exec exited {proc.returncode}: {proc.stderr[-400:]}"
+            )
+
+        last_msg = out_path.read_text() if out_path.exists() else ""
+        if not last_msg.strip():
+            raise RuntimeError("codex exec produced empty last_message")
+
+        try:
+            payload = json.loads(last_msg)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"codex output failed to parse as JSON: {exc}; raw={last_msg[:300]!r}"
+            ) from exc
+        parsed = _JudgeResponse.model_validate(payload)
+
+        in_tokens, out_tokens = _parse_usage(proc.stdout)
+
     return JudgeResult(
         classification=parsed.classification,
         fix_suggestion=parsed.fix_suggestion,
-        prompt_tokens=usage.prompt_tokens if usage else 0,
-        completion_tokens=usage.completion_tokens if usage else 0,
+        prompt_tokens=in_tokens,
+        completion_tokens=out_tokens,
         latency_ms=latency_ms,
     )

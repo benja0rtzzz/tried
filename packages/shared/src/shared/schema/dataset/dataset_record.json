@@ -2,15 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tried.local/schemas/dataset-row.json",
   "title": "TRIED Dataset Row",
-  "description": "A single PyTorch-to-Triton translation example with all attempts, verification results, judge decisions, and final outcome. This is the record the orchestrator writes to the dataset after exhausting its retry budget (or succeeding earlier).",
+  "description": "A single PyTorch-to-Triton translation example with all attempts, verification results, and judge decisions. Each attempt carries its own judge_classification so the terminal outcome is derivable from the attempts list.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "example_id",
     "source",
     "attempts",
-    "final_outcome",
-    "final_winning_attempt_n"
+    "final_outcome"
   ],
   "properties": {
     "example_id": {
@@ -25,12 +24,7 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/attempt" }
     },
-    "final_outcome": { "$ref": "#/$defs/final_outcome" },
-    "final_winning_attempt_n": {
-      "type": ["integer", "null"],
-      "minimum": 0,
-      "description": "The attempt_n whose result is recorded in final_outcome. Null iff final_outcome is in {correctness_failed, all_attempts_failed}."
-    }
+    "final_outcome": { "$ref": "#/$defs/dataset_outcome" }
   },
   "$defs": {
     "source": {
@@ -88,11 +82,8 @@
         "triton_code",
         "compile",
         "correctness",
-        "benchmark",
         "judge_classification",
         "judge_fix_suggestion",
-        "latency",
-        "tokens",
         "timestamp"
       ],
       "properties": {
@@ -129,20 +120,11 @@
           ],
           "description": "Numeric agreement between candidate Triton output and reference outputs. Null iff compile.status == 'failed'."
         },
-        "benchmark": {
-          "anyOf": [
-            { "$ref": "#/$defs/benchmark" },
-            { "type": "null" }
-          ],
-          "description": "Timing measurements and speedups. Null iff correctness is null or correctness.status == 'failed'."
-        },
         "judge_classification": { "$ref": "#/$defs/judge_classification" },
         "judge_fix_suggestion": {
           "type": ["string", "null"],
           "description": "Natural-language advice from the judge for the next attempt. Null when no further retry will happen or the judge declined to advise."
         },
-        "latency": { "$ref": "#/$defs/latency" },
-        "tokens": { "$ref": "#/$defs/tokens" },
         "timestamp": {
           "type": "string",
           "format": "date-time",
@@ -206,118 +188,10 @@
         }
       }
     },
-    "benchmark": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Timing results per benchmarking-protocol.md: 10 warmup + 100 runs, CUDA event timing, synced start/end, median reported.",
-      "required": [
-        "triton_ms",
-        "eager_ms",
-        "inductor_ms",
-        "speedup_vs_eager",
-        "speedup_vs_inductor",
-        "triton_std_ms",
-        "eager_std_ms",
-        "inductor_std_ms"
-      ],
-      "properties": {
-        "triton_ms": {
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "description": "Median wall time of the candidate Triton kernel, in milliseconds."
-        },
-        "eager_ms": {
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "description": "Median wall time of PyTorch eager, in milliseconds."
-        },
-        "inductor_ms": {
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "description": "Median wall time of torch.compile + Inductor, in milliseconds."
-        },
-        "speedup_vs_eager": {
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "description": "eager_ms / triton_ms. >1.0 means Triton is faster than eager."
-        },
-        "speedup_vs_inductor": {
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "description": "inductor_ms / triton_ms. >1.0 means Triton is faster than Inductor."
-        },
-        "triton_std_ms": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Standard deviation of the 100 Triton timing runs, in milliseconds. Measures timing stability."
-        },
-        "eager_std_ms": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Standard deviation of the 100 eager timing runs, in milliseconds."
-        },
-        "inductor_std_ms": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Standard deviation of the 100 Inductor timing runs, in milliseconds."
-        }
-      }
-    },
-    "latency": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Per-stage wall times for this attempt, in milliseconds.",
-      "required": ["generator_ms", "judge_ms", "compile_ms", "run_ms"],
-      "properties": {
-        "generator_ms": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Wall time of the Ollama call that produced triton_code."
-        },
-        "judge_ms": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Wall time of the OpenAI judge call."
-        },
-        "compile_ms": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Wall time of POST /compile on the verification server."
-        },
-        "run_ms": {
-          "type": ["integer", "null"],
-          "minimum": 0,
-          "description": "Wall time of POST /run on the verification server. Null if not reached (compile failed)."
-        }
-      }
-    },
-    "tokens": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Token counts for the generator and judge calls in this attempt.",
-      "required": ["generator_prompt", "generator_completion", "judge_prompt", "judge_completion"],
-      "properties": {
-        "generator_prompt": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Prompt tokens sent to the generator."
-        },
-        "generator_completion": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Completion tokens returned by the generator."
-        },
-        "judge_prompt": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Prompt tokens sent to the judge."
-        },
-        "judge_completion": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Completion tokens returned by the judge."
-        }
-      }
+    "dataset_outcome": {
+      "type": "string",
+      "enum": ["compiled_correct", "numeric_fail", "compile_fail"],
+      "description": "Top-level result of the agent loop. compiled_correct = at least one attempt compiled and passed numerics. numeric_fail = at least one attempt compiled but none passed numerics. compile_fail = no attempt ever compiled."
     },
     "dtype": {
       "type": "string",
@@ -351,17 +225,6 @@
       ],
       "description": "Coarse op family. Closed vocabulary. Finalized after corpus extraction."
     },
-    "final_outcome": {
-      "type": "string",
-      "enum": [
-        "correctness_failed",
-        "compiled_correct_slow",
-        "compiled_correct_parity",
-        "compiled_correct_faster_than_inductor",
-        "all_attempts_failed"
-      ],
-      "description": "Terminal state for the example. Closed vocabulary. Granularity is intentionally coarse; finer speed tiers should be derived from benchmark.speedup_vs_inductor in analysis rather than baked into the enum."
-    },
     "judge_classification": {
       "type": "string",
       "enum": [
@@ -370,9 +233,7 @@
         "indexing_error",
         "triton_api_error",
         "correctness_failed_numeric",
-        "correct_but_slower_than_inductor",
-        "correct_and_competitive",
-        "correct_and_faster",
+        "compiled_correct",
         "other"
       ],
       "description": "Judge's classification of an attempt's outcome. Closed vocabulary. The judge is constrained at call time to values in this set."

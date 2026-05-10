@@ -1,0 +1,18 @@
+# Pinned commits for cloned reference repos
+# columns: name<TAB>sha<TAB>committer_date_iso8601<TAB>tier<TAB>url
+liger-kernel	97b6fe2bb6cc06af426c31c6ec9577835cb46ba9	2026-05-09T20:08:52Z	1	https://github.com/linkedin/Liger-Kernel.git
+flash-attention	ab66326aaa4fe3529fbc00f3156f3a762dd3141b	2026-05-08T08:36:26-07:00	1	https://github.com/Dao-AILab/flash-attention.git
+torchao	fe5d41ed2bd28a27f165876fd8ede9dc7f4dbe32	2026-05-09T07:05:40-07:00	1	https://github.com/pytorch/ao.git
+tritonbench	4d68cf47f562d486f067193aefd1549deb42e1f9	2026-05-08T19:15:11Z	1	https://github.com/pytorch-labs/tritonbench.git
+triton	521c2e378febcebc7cf0c1e41d7c6679e144bd50	2026-05-09T00:29:19Z	1	https://github.com/triton-lang/triton.git
+attorch	04c5e3edad907b32006416382db7f0f68af31670	2025-08-12T18:56:04-04:00	1	https://github.com/BobMcDear/attorch.git
+flaggems	183cc3d78eace1d4a8b12e36bb4dad5f4b1efe14	2026-05-09T22:23:08+08:00	1	https://github.com/FlagOpen/FlagGems.git
+flash-linear-attention	07e2bd329df15090d34c7d4b25b638b3cb57c516	2026-05-10T01:51:34+08:00	1	https://github.com/fla-org/flash-linear-attention.git
+applied-ai	2391954b19988bd76cf3c2ea84c1ce74b68d568b	2025-08-22T18:32:33-05:00	1	https://github.com/meta-pytorch/applied-ai.git
+attention-gym	29185740237a6e02c55740be8333cb744abccbd7	2026-04-12T19:03:02-07:00	1	https://github.com/meta-pytorch/attention-gym.git
+fbgemm	26bfbd50106412e62893de5cf19f093c5b502351	2026-05-08T23:33:22-07:00	2	https://github.com/pytorch/FBGEMM.git
+mamba	a14b1dff0454a3bc27d9eb31355dc01e4b2490ec	2026-05-09T13:41:53+02:00	2	https://github.com/state-spaces/mamba.git
+vllm	f80aa53c9dc2273a19a6855092069db7e1306fff	2026-05-09T17:46:52-04:00	2	https://github.com/vllm-project/vllm.git
+xformers	ca6d2aa0d43241fc8a8dcd872debc2406160160d	2026-04-21T15:56:12Z	2	https://github.com/facebookresearch/xformers.git
+scattermoe	47b5e1502e5a10e82c8e5945d761b877849871e7	2025-10-03T01:51:21Z	2	https://github.com/shawntan/scattermoe.git
+flashnn	528a9301587f5fb135b25d973a87ba0a40a703a7	2024-09-09T16:22:40+08:00	2	https://github.com/AlibabaPAI/FLASHNN.git

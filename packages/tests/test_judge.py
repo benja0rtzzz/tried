@@ -1,13 +1,13 @@
 """
 Judge client integration test.
 
-Skipped automatically if GEMINI_API_KEY is not set in the environment.
+Live tests are skipped automatically if the codex CLI is not on PATH.
 Covers:
   - Judge prompt builder (AttemptContext rendering)
-  - Live Gemini call and structured output parsing
+  - Live codex CLI call and structured output parsing
   - JudgeResult field types and constraints
 """
-import os
+import shutil
 
 import pytest
 
@@ -19,9 +19,9 @@ from shared.enums import JudgeClassification
 # Skip guard
 # ---------------------------------------------------------------------------
 
-_GEMINI_CREDS = pytest.mark.skipif(
-    not os.getenv("GEMINI_API_KEY"),
-    reason="GEMINI_API_KEY not set — skipping live judge tests",
+_CODEX_AVAILABLE = pytest.mark.skipif(
+    shutil.which("codex") is None,
+    reason="codex CLI not on PATH — skipping live judge tests",
 )
 
 # ---------------------------------------------------------------------------
@@ -68,11 +68,11 @@ def test_prompt_includes_prior_fix_suggestion(simple_pytorch_code, compile_failu
 
 
 # ---------------------------------------------------------------------------
-# Live judge tests (require GEMINI_API_KEY)
+# Live judge tests (require codex CLI on PATH)
 # ---------------------------------------------------------------------------
 
-@_GEMINI_CREDS
-def test_judge_compile_failure_returns_valid_result(simple_pytorch_code, compile_failure_context, gemini_throttle):
+@_CODEX_AVAILABLE
+def test_judge_compile_failure_returns_valid_result(simple_pytorch_code, compile_failure_context):
     result = judge(simple_pytorch_code, [compile_failure_context])
 
     assert isinstance(result, JudgeResult)
@@ -82,30 +82,30 @@ def test_judge_compile_failure_returns_valid_result(simple_pytorch_code, compile
     assert isinstance(result.completion_tokens, int) and result.completion_tokens > 0
 
 
-@_GEMINI_CREDS
-def test_judge_compile_failure_suggests_fix(simple_pytorch_code, compile_failure_context, gemini_throttle):
+@_CODEX_AVAILABLE
+def test_judge_compile_failure_suggests_fix(simple_pytorch_code, compile_failure_context):
     """A compile failure should always produce a fix suggestion."""
     result = judge(simple_pytorch_code, [compile_failure_context])
     assert result.fix_suggestion is not None
     assert len(result.fix_suggestion) > 0
 
 
-@_GEMINI_CREDS
-def test_judge_correctness_failure_suggests_fix(simple_pytorch_code, correctness_failure_context, gemini_throttle):
+@_CODEX_AVAILABLE
+def test_judge_correctness_failure_suggests_fix(simple_pytorch_code, correctness_failure_context):
     """A correctness failure should always produce a fix suggestion."""
     result = judge(simple_pytorch_code, [correctness_failure_context])
     assert result.fix_suggestion is not None
 
 
-@_GEMINI_CREDS
-def test_judge_classification_is_closed_vocabulary(simple_pytorch_code, compile_failure_context, gemini_throttle):
+@_CODEX_AVAILABLE
+def test_judge_classification_is_closed_vocabulary(simple_pytorch_code, compile_failure_context):
     """Classification must be one of the 9 enum values — no free-text leakage."""
     result = judge(simple_pytorch_code, [compile_failure_context])
     assert result.classification in JudgeClassification
 
 
-@_GEMINI_CREDS
-def test_judge_multi_attempt_context(simple_pytorch_code, compile_failure_context, correctness_failure_context, gemini_throttle):
+@_CODEX_AVAILABLE
+def test_judge_multi_attempt_context(simple_pytorch_code, compile_failure_context, correctness_failure_context):
     """Judge should handle multiple prior attempts without error."""
     prior = AttemptContext(**{**compile_failure_context, "fix_suggestion": "Add masks to load and store."})
     current = AttemptContext(**{**correctness_failure_context, "attempt_n": 1})

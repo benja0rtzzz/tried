@@ -3,15 +3,14 @@ Agent loop for the TRIED orchestrator.
 
 Public API
 ----------
-run_job(record, client, data_dir) -> FinalOutcome | None
-    Runs the full preflight → generate → compile → run → benchmark → judge
-    retry loop for one corpus record. Returns the FinalOutcome on completion,
-    or None if the preflight check failed (written to skipped.jsonl).
+run_job(record, client, data_dir) -> bool
+    Runs the full preflight → generate → compile → run → judge retry loop for
+    one corpus record. Returns True on completion (written to dataset.jsonl),
+    or False if the preflight check failed (written to skipped.jsonl).
     Transport exceptions propagate to the caller.
 """
 from __future__ import annotations
 
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,8 +20,8 @@ from shared.dataset import append_dataset_row, append_skipped
 from shared.enums import (
     CompileStatus,
     CorrectnessStatus,
+    DatasetOutcome,
     Dtype,
-    FinalOutcome,
     JudgeClassification,
     OpCategory,
     TolerancePolicy,
@@ -30,18 +29,13 @@ from shared.enums import (
 from shared.logging import get_logger
 from shared.models import (
     Attempt,
-    Benchmark,
     CompileResult,
     CorpusRecord,
     CorrectnessCheck,
     DatasetRow,
-    Latency,
     Source,
-    Tokens,
 )
 from shared.verification.api import (
-    BenchmarkRequest,
-    BenchmarkResponse,
     CompileRequest,
     CompileResponse,
     PreflightRequest,
@@ -58,24 +52,17 @@ _log = get_logger(__name__)
 
 MAX_ATTEMPTS = 5
 
-_SUCCESS_MAP: dict[JudgeClassification, FinalOutcome] = {
-    JudgeClassification.CORRECT_AND_FASTER:               FinalOutcome.COMPILED_CORRECT_FASTER_THAN_INDUCTOR,
-    JudgeClassification.CORRECT_AND_COMPETITIVE:          FinalOutcome.COMPILED_CORRECT_PARITY,
-    JudgeClassification.CORRECT_BUT_SLOWER_THAN_INDUCTOR: FinalOutcome.COMPILED_CORRECT_SLOW,
-}
-
 
 def run_job(
     record: CorpusRecord,
     client: VerificationClient,
     data_dir: Path,
-) -> FinalOutcome | None:
+) -> bool:
     """Run the full agent loop for one corpus record.
 
-    Returns the FinalOutcome written to dataset.jsonl, or None if the preflight
-    check failed (record written to skipped.jsonl instead).
-    Transport exceptions (server unreachable, OpenAI down) propagate to the
-    caller, which is responsible for writing to skipped.jsonl.
+    Returns True if the record was written to dataset.jsonl, False if preflight
+    failed and it was written to skipped.jsonl instead.
+    Transport exceptions propagate to the caller.
     """
     dataset_path = data_dir / "dataset.jsonl"
     skipped_path = data_dir / "skipped.jsonl"
@@ -95,7 +82,7 @@ def run_job(
         reason = preflight.error_message or "preflight: eager vs inductor disagreement"
         _log.warning("preflight failed  example_id=%s  reason=%s", record.example_id, reason)
         append_skipped(skipped_path, record.example_id, reason)
-        return None
+        return False
 
     # --- Retry loop ---
     attempts: list[Attempt] = []
@@ -117,16 +104,11 @@ def run_job(
             prior_advice=prior_advice,
         )
 
-        t0 = time.monotonic()
         compile_resp = client.compile(CompileRequest(triton_code=gen.triton_code))
-        compile_ms = int((time.monotonic() - t0) * 1000)
 
         run_resp: RunResponse | None = None
-        run_ms: int | None = None
-        benchmark_resp: BenchmarkResponse | None = None
 
         if compile_resp.status == CompileStatus.SUCCESS:
-            t0 = time.monotonic()
             try:
                 run_resp = client.run(RunRequest(
                     triton_code=gen.triton_code,
@@ -145,21 +127,10 @@ def run_job(
                     correctness_status=CorrectnessStatus.FAILED,
                     error_message="ReadTimeout: /run did not respond within the client timeout",
                 )
-            run_ms = int((time.monotonic() - t0) * 1000)
 
-            if run_resp.correctness_status == CorrectnessStatus.PASSED:
-                benchmark_resp = client.benchmark(BenchmarkRequest(
-                    triton_code=gen.triton_code,
-                    pytorch_code=record.pytorch_code,
-                    input_shapes=record.input_shapes,
-                    input_dtypes=record.input_dtypes,
-                    rng_seed=record.rng_seed,
-                ))
-
-        # Build judge context from all attempts so far + current one
         judge_contexts = [_attempt_to_context(a) for a in attempts]
         judge_contexts.append(
-            _results_to_context(attempt_n, gen, compile_resp, run_resp, benchmark_resp)
+            _results_to_context(attempt_n, gen, compile_resp, run_resp)
         )
         judge_result = judge(record.pytorch_code, judge_contexts)
 
@@ -169,10 +140,7 @@ def run_job(
             gen=gen,
             compile_resp=compile_resp,
             run_resp=run_resp,
-            benchmark_resp=benchmark_resp,
             judge_result=judge_result,
-            compile_ms=compile_ms,
-            run_ms=run_ms,
             timestamp=timestamp,
             policy=policy,
         ))
@@ -184,16 +152,16 @@ def run_job(
         if judge_result.fix_suggestion is not None:
             _log.info("judge advice: %s", judge_result.fix_suggestion)
 
-        if judge_result.classification in _SUCCESS_MAP:
+        if judge_result.classification == JudgeClassification.COMPILED_CORRECT:
             break
 
         prior_code = gen.triton_code
         prior_advice = judge_result.fix_suggestion
 
-    final_outcome, winning_n = _determine_outcome(attempts)
+    final_outcome = _compute_outcome(attempts)
     _log.info(
-        "job done  example_id=%s  outcome=%s  attempts=%d",
-        record.example_id, final_outcome.value, len(attempts),
+        "job done  example_id=%s  attempts=%d  outcome=%s",
+        record.example_id, len(attempts), final_outcome.value,
     )
 
     append_dataset_row(dataset_path, DatasetRow(
@@ -208,18 +176,16 @@ def run_job(
         ),
         attempts=attempts,
         final_outcome=final_outcome,
-        final_winning_attempt_n=winning_n,
     ))
 
-    return final_outcome
+    return True
 
 
 # ---------------------------------------------------------------------------
-# Private helpers — data mapping only, no control flow
+# Private helpers
 # ---------------------------------------------------------------------------
 
 def _select_policy(dtypes: list[Dtype], op_category: OpCategory) -> TolerancePolicy:
-    """Pick a tolerance policy from the corpus record's dtype and op category."""
     fp16_dtypes = {Dtype.FLOAT16, Dtype.BFLOAT16}
     int_dtypes  = {Dtype.INT8, Dtype.INT16, Dtype.INT32, Dtype.INT64, Dtype.BOOL}
     dtype_set = set(dtypes)
@@ -242,36 +208,19 @@ def _effective_compile(
     compile_resp: CompileResponse,
     run_resp: RunResponse | None,
 ) -> tuple[CompileStatus, str | None]:
-    """Return the effective compile status and error for an attempt.
-
-    Triton JIT compilation is lazy — a kernel that passes the shallow Python
-    import check can still crash on first execution. When run_resp has no
-    vs_eager (exception before any tensor comparison), treat it as a compile
-    failure so the schema invariant holds:
-        correctness null iff compile.status == failed
-    """
     if run_resp is not None and run_resp.vs_eager is None:
         return CompileStatus.FAILED, run_resp.error_message
     return compile_resp.status, compile_resp.error_message
 
 
-def _determine_outcome(attempts: list[Attempt]) -> tuple[FinalOutcome, int | None]:
-    """Map the completed attempt list to a FinalOutcome and winning attempt index."""
-    last = attempts[-1]
-    outcome = _SUCCESS_MAP.get(last.judge_classification)
-    if outcome is not None:
-        return outcome, last.attempt_n
-
-    if all(a.compile.status == CompileStatus.FAILED for a in attempts):
-        return FinalOutcome.ALL_ATTEMPTS_FAILED, None
-
-    if all(
-        a.correctness is not None and a.correctness.status == CorrectnessStatus.FAILED
-        for a in attempts
-    ):
-        return FinalOutcome.CORRECTNESS_FAILED, None
-
-    return FinalOutcome.ALL_ATTEMPTS_FAILED, None
+def _compute_outcome(attempts: list[Attempt]) -> DatasetOutcome:
+    for a in attempts:
+        if a.judge_classification == JudgeClassification.COMPILED_CORRECT:
+            return DatasetOutcome.COMPILED_CORRECT
+    for a in attempts:
+        if a.compile.status == CompileStatus.SUCCESS:
+            return DatasetOutcome.NUMERIC_FAIL
+    return DatasetOutcome.COMPILE_FAIL
 
 
 def _build_attempt(
@@ -281,14 +230,10 @@ def _build_attempt(
     gen: GeneratorResult,
     compile_resp: CompileResponse,
     run_resp: RunResponse | None,
-    benchmark_resp: BenchmarkResponse | None,
     judge_result: JudgeResult,
-    compile_ms: int,
-    run_ms: int | None,
     timestamp: datetime,
     policy: TolerancePolicy,
 ) -> Attempt:
-    """Assemble an Attempt model from the raw results of one loop iteration."""
     eff_compile_status, eff_compile_error = _effective_compile(compile_resp, run_resp)
 
     correctness: CorrectnessCheck | None = None
@@ -305,19 +250,6 @@ def _build_attempt(
             vs_inductor=run_resp.vs_inductor,
         )
 
-    benchmark: Benchmark | None = None
-    if benchmark_resp is not None:
-        benchmark = Benchmark(
-            triton_ms=benchmark_resp.triton_ms,
-            eager_ms=benchmark_resp.eager_ms,
-            inductor_ms=benchmark_resp.inductor_ms,
-            speedup_vs_eager=benchmark_resp.speedup_vs_eager,
-            speedup_vs_inductor=benchmark_resp.speedup_vs_inductor,
-            triton_std_ms=benchmark_resp.triton_std_ms,
-            eager_std_ms=benchmark_resp.eager_std_ms,
-            inductor_std_ms=benchmark_resp.inductor_std_ms,
-        )
-
     return Attempt(
         attempt_n=attempt_n,
         prior_advice_applied=prior_advice,
@@ -327,27 +259,13 @@ def _build_attempt(
             error=eff_compile_error,
         ),
         correctness=correctness,
-        benchmark=benchmark,
         judge_classification=judge_result.classification,
         judge_fix_suggestion=judge_result.fix_suggestion,
-        latency=Latency(
-            generator_ms=gen.latency_ms,
-            judge_ms=judge_result.latency_ms,
-            compile_ms=compile_ms,
-            run_ms=run_ms,
-        ),
-        tokens=Tokens(
-            generator_prompt=gen.prompt_tokens,
-            generator_completion=gen.completion_tokens,
-            judge_prompt=judge_result.prompt_tokens,
-            judge_completion=judge_result.completion_tokens,
-        ),
         timestamp=timestamp,
     )
 
 
 def _attempt_to_context(attempt: Attempt) -> AttemptContext:
-    """Convert a completed Attempt model to an AttemptContext for the judge prompt."""
     return AttemptContext(
         attempt_n=attempt.attempt_n,
         triton_code=attempt.triton_code,
@@ -356,8 +274,6 @@ def _attempt_to_context(attempt: Attempt) -> AttemptContext:
         correctness_status=attempt.correctness.status.value if attempt.correctness else None,
         max_abs_diff=attempt.correctness.vs_eager.max_abs_diff if attempt.correctness else None,
         pct_exceeding=attempt.correctness.vs_eager.pct_elements_exceeding_tol if attempt.correctness else None,
-        speedup_vs_eager=attempt.benchmark.speedup_vs_eager if attempt.benchmark else None,
-        speedup_vs_inductor=attempt.benchmark.speedup_vs_inductor if attempt.benchmark else None,
         fix_suggestion=attempt.judge_fix_suggestion,
     )
 
@@ -367,9 +283,7 @@ def _results_to_context(
     gen: GeneratorResult,
     compile_resp: CompileResponse,
     run_resp: RunResponse | None,
-    benchmark_resp: BenchmarkResponse | None,
 ) -> AttemptContext:
-    """Build an AttemptContext from the raw results of the current in-flight attempt."""
     eff_status, eff_error = _effective_compile(compile_resp, run_resp)
     return AttemptContext(
         attempt_n=attempt_n,
@@ -388,7 +302,5 @@ def _results_to_context(
             run_resp.vs_eager.pct_elements_exceeding_tol
             if run_resp and run_resp.vs_eager else None
         ),
-        speedup_vs_eager=benchmark_resp.speedup_vs_eager if benchmark_resp else None,
-        speedup_vs_inductor=benchmark_resp.speedup_vs_inductor if benchmark_resp else None,
         fix_suggestion=None,
     )

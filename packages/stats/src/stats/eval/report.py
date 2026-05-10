@@ -91,16 +91,6 @@ def render_describe_markdown(label: str, sections: dict) -> str:
     print(tabulate(rows, headers=headers, tablefmt="pipe"), file=out)
     print(file=out)
 
-    print("## Judge classification distribution (all attempts)", file=out)
-    jc = sections["judge_classification_dist"]
-    total = sum(jc.values()) or 1
-    rows = [
-        [k, v, f"{100 * v / total:.1f}%"]
-        for k, v in sorted(jc.items(), key=lambda kv: -kv[1])
-    ]
-    print(tabulate(rows, headers=["classification", "count", "%"], tablefmt="pipe"), file=out)
-    print(file=out)
-
     return out.getvalue()
 
 

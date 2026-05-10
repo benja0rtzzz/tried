@@ -25,7 +25,7 @@
       "description": "UUID for this whole eval run. All EvalRecords produced in one orchestrator invocation share the same run_id."
     },
     "spec": {
-      "$ref": "spec.json",
+      "$ref": "eval_spec.json",
       "description": "Embedded EvalSpec. Recorded alongside the result so each row in eval/results/<model_label>/eval_rows.jsonl is self-contained for analysis (no join against eval/holdout/ required)."
     },
     "attempts": {
@@ -63,8 +63,6 @@
         "compile",
         "correctness",
         "benchmark",
-        "judge_classification",
-        "judge_fix_suggestion",
         "latency",
         "tokens",
         "timestamp"
@@ -109,39 +107,15 @@
           ],
           "description": "Timing measurements, speedups, and raw 100-iter samples. Null iff correctness is null or correctness.status == 'failed'."
         },
-        "judge_classification": {
-          "type": "string",
-          "enum": [
-            "shape_mismatch",
-            "dtype_mismatch",
-            "indexing_error",
-            "triton_api_error",
-            "correctness_failed_numeric",
-            "correct_but_slower_than_inductor",
-            "correct_and_competitive",
-            "correct_and_faster",
-            "other"
-          ],
-          "description": "Judge's classification of an attempt's outcome. Same closed vocabulary as DatasetRow.attempts.item.judge_classification."
-        },
-        "judge_fix_suggestion": {
-          "type": ["string", "null"],
-          "description": "Natural-language advice from the judge for the next attempt. Null when no further retry will happen or the judge declined to advise."
-        },
         "latency": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["generator_ms", "judge_ms", "compile_ms", "run_ms"],
+          "required": ["generator_ms", "compile_ms", "run_ms"],
           "properties": {
             "generator_ms": {
               "type": "integer",
               "minimum": 0,
               "description": "Wall time of the Ollama call that produced triton_code, in milliseconds."
-            },
-            "judge_ms": {
-              "type": "integer",
-              "minimum": 0,
-              "description": "Wall time of the OpenAI judge call, in milliseconds."
             },
             "compile_ms": {
               "type": "integer",
@@ -158,12 +132,10 @@
         "tokens": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["generator_prompt", "generator_completion", "judge_prompt", "judge_completion"],
+          "required": ["generator_prompt", "generator_completion"],
           "properties": {
             "generator_prompt": { "type": "integer", "minimum": 0 },
-            "generator_completion": { "type": "integer", "minimum": 0 },
-            "judge_prompt": { "type": "integer", "minimum": 0 },
-            "judge_completion": { "type": "integer", "minimum": 0 }
+            "generator_completion": { "type": "integer", "minimum": 0 }
           }
         },
         "timestamp": {

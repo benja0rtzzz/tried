@@ -1,5 +1,5 @@
 """
-End-to-end pipeline tests: real generator (Ollama) + real judge (Gemini) + mock verification.
+End-to-end pipeline tests: real generator (Ollama) + real judge (codex CLI) + mock verification.
 
 The mock server (mock_server.py) runs locally at localhost:8765 and returns
 scripted compile/run/benchmark responses — the actual generated Triton code is
@@ -7,7 +7,7 @@ ignored. This lets us test the full agent loop logic (retries, judge feedback,
 dataset writes) without needing the Lenovo CUDA server.
 
 Prerequisites:
-  - GEMINI_API_KEY env var set
+  - codex CLI on PATH with profile gpt-5-3-codex configured
   - Ollama running with qwen2.5-coder:14b pulled
   - uv sync --all-packages done
 
@@ -28,9 +28,9 @@ import pytest
 import uvicorn
 
 import orchestrator.clients.verification_client as _vc_module
-from orchestrator.agent import run_job
+from orchestrator.dataset.agent import run_job
 from orchestrator.clients.verification_client import VerificationClient
-from shared.enums import CompileStatus, CorrectnessStatus, FinalOutcome, Split
+from shared.enums import CompileStatus, CorrectnessStatus, JudgeClassification, Split
 from shared.logging import get_logger
 from shared.models import CorpusRecord, DatasetRow
 
@@ -228,7 +228,7 @@ def _make_client() -> VerificationClient:
 
 def _log_summary(label: str, scripts: list[dict], row: DatasetRow) -> None:
     _log.info("━━━ %s — %d script(s) configured ━━━", label, len(scripts))
-    _log.info("outcome: %s  |  total attempts: %d", row.final_outcome.value, len(row.attempts))
+    _log.info("total attempts: %d", len(row.attempts))
     for a in row.attempts:
         advice = a.judge_fix_suggestion
         advice_preview = f'"{advice[:120]}{"…" if len(advice) > 120 else ""}"' if advice else "none"
@@ -267,12 +267,7 @@ class TestEasyScenario:
         row = _read_row("easy")
         _log_summary("EASY", _EASY_SCRIPTS, row)
         assert len(row.attempts) == 1
-        assert row.final_outcome in {
-            FinalOutcome.COMPILED_CORRECT_FASTER_THAN_INDUCTOR,
-            FinalOutcome.COMPILED_CORRECT_PARITY,
-            FinalOutcome.COMPILED_CORRECT_SLOW,
-        }
-        assert row.final_winning_attempt_n == 0
+        assert row.attempts[0].judge_classification == JudgeClassification.COMPILED_CORRECT
 
     def test_no_prior_advice_on_first_attempt(self):
         row = _read_row("easy")
@@ -302,12 +297,7 @@ class TestMediumScenario:
         row = _read_row("medium")
         _log_summary("MEDIUM", _MEDIUM_SCRIPTS, row)
         assert len(row.attempts) == 2
-        assert row.final_outcome in {
-            FinalOutcome.COMPILED_CORRECT_FASTER_THAN_INDUCTOR,
-            FinalOutcome.COMPILED_CORRECT_PARITY,
-            FinalOutcome.COMPILED_CORRECT_SLOW,
-        }
-        assert row.final_winning_attempt_n == 1
+        assert row.attempts[1].judge_classification == JudgeClassification.COMPILED_CORRECT
 
     def test_attempt_0_correctness_failed(self):
         row = _read_row("medium")
@@ -343,12 +333,7 @@ class TestHardScenario:
         row = _read_row("hard")
         _log_summary("HARD", _HARD_SCRIPTS, row)
         assert len(row.attempts) == 3
-        assert row.final_outcome in {
-            FinalOutcome.COMPILED_CORRECT_FASTER_THAN_INDUCTOR,
-            FinalOutcome.COMPILED_CORRECT_PARITY,
-            FinalOutcome.COMPILED_CORRECT_SLOW,
-        }
-        assert row.final_winning_attempt_n == 2
+        assert row.attempts[2].judge_classification == JudgeClassification.COMPILED_CORRECT
 
     def test_attempt_0_compile_status_failed(self):
         row = _read_row("hard")

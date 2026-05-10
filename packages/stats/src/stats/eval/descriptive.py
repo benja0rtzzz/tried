@@ -13,14 +13,14 @@ import statistics
 from collections import Counter
 from typing import Iterable
 
-from shared.enums import FinalOutcome
+from shared.enums import EvalFinalOutcome
 from shared.models import EvalRecord
 
 
-SUCCESS_OUTCOMES: frozenset[FinalOutcome] = frozenset({
-    FinalOutcome.COMPILED_CORRECT_FASTER_THAN_INDUCTOR,
-    FinalOutcome.COMPILED_CORRECT_PARITY,
-    FinalOutcome.COMPILED_CORRECT_SLOW,
+SUCCESS_OUTCOMES: frozenset[EvalFinalOutcome] = frozenset({
+    EvalFinalOutcome.COMPILED_CORRECT_FASTER_THAN_INDUCTOR,
+    EvalFinalOutcome.COMPILED_CORRECT_PARITY,
+    EvalFinalOutcome.COMPILED_CORRECT_SLOW,
 })
 
 
@@ -75,7 +75,7 @@ def _winning(rows: Iterable[EvalRecord]) -> list[EvalRecord]:
 
 
 def outcome_distribution(rows: list[EvalRecord]) -> dict:
-    """Total + per-tier counts for each FinalOutcome."""
+    """Total + per-tier counts for each EvalFinalOutcome."""
     n = len(rows)
     total = Counter(r.final_outcome.value for r in rows)
     by_tier: dict[str, Counter] = {}
@@ -162,10 +162,3 @@ def triton_compile_stats(rows: list[EvalRecord]) -> dict:
     return {"triton_compile_ms": _describe(triton_compile_ms)}
 
 
-def judge_classification_dist(rows: list[EvalRecord]) -> dict:
-    """Counts per JudgeClassification across all attempts in the run."""
-    c: Counter[str] = Counter()
-    for r in rows:
-        for a in r.attempts:
-            c[a.judge_classification.value] += 1
-    return dict(c)

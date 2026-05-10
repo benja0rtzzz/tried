@@ -21,7 +21,7 @@
       "description": "UUIDv5 derived from the canonical-AST hash of pytorch_code. Stable across re-runs of the generator: re-generating the same fusion yields the same example_id, which is the join key for paired tests across two model_labels."
     },
     "spec": {
-      "$ref": "spec.json",
+      "$ref": "eval_spec.json",
       "description": "The fully-determined spec this example was generated from (stage-1 output). Embedded so analysis tooling can read tier/form/ops/shapes without joining against an external sampler log."
     },
     "pytorch_code": {

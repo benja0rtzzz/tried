@@ -2,7 +2,7 @@
 Pydantic v2 models for all record types.
 CorpusRecord maps to schema/dataset/eval_and_training.json (what the agent loop reads).
 DatasetRow maps to schema/dataset/dataset_record.json (what the orchestrator writes).
-EvalSpec / EvalCorpusRecord / EvalRecord map to schema/eval/.
+EvalSpec / EvalCorpusRecord / EvalRecord map to schema/eval/{eval_spec,eval_corpus_record,eval_result}.json.
 """
 from __future__ import annotations
 
@@ -14,9 +14,10 @@ from pydantic import BaseModel, Field, model_validator
 from shared.enums import (
     CompileStatus,
     CorrectnessStatus,
+    DatasetOutcome,
     Difficulty,
     Dtype,
-    FinalOutcome,
+    EvalFinalOutcome,
     JudgeClassification,
     OpCategory,
     Split,
@@ -28,9 +29,6 @@ __all__ = [
     "Source",
     "CorrectnessStats",
     "CorrectnessCheck",
-    "Benchmark",
-    "Latency",
-    "Tokens",
     "Attempt",
     "DatasetRow",
     "EvalSpec",
@@ -38,13 +36,15 @@ __all__ = [
     "EvalRecord",
     "EvalAttempt",
     "EvalBenchmark",
+    "EvalLatency",
+    "EvalTokens",
     "AcceptanceMeta",
     "FormName",
 ]
 
 
 # Locked closed vocabulary of the 11 fusion-form names. Mirrors the enum
-# in schema/eval/spec.json. Source of metadata for each form lives in
+# in schema/eval/eval_spec.json. Source of metadata for each form lives in
 # shared.eval.forms.FORMS.
 FormName = Literal[
     "chain_2_unary",
@@ -132,31 +132,6 @@ class CorrectnessCheck(BaseModel):
     vs_inductor:           CorrectnessStats
 
 
-class Benchmark(BaseModel):
-    triton_ms:           float = Field(gt=0)
-    eager_ms:            float = Field(gt=0)
-    inductor_ms:         float = Field(gt=0)
-    speedup_vs_eager:    float = Field(gt=0)
-    speedup_vs_inductor: float = Field(gt=0)
-    triton_std_ms:       float = Field(ge=0)
-    eager_std_ms:        float = Field(ge=0)
-    inductor_std_ms:     float = Field(ge=0)
-
-
-class Latency(BaseModel):
-    generator_ms: int          = Field(ge=0)
-    judge_ms:     int          = Field(ge=0)
-    compile_ms:   int          = Field(ge=0)
-    run_ms:       Optional[int] = Field(default=None, ge=0)
-
-
-class Tokens(BaseModel):
-    generator_prompt:     int = Field(ge=0)
-    generator_completion: int = Field(ge=0)
-    judge_prompt:         int = Field(ge=0)
-    judge_completion:     int = Field(ge=0)
-
-
 class CompileResult(BaseModel):
     status: CompileStatus
     error:  Optional[str]
@@ -171,31 +146,19 @@ class CompileResult(BaseModel):
 
 
 class Attempt(BaseModel):
-    attempt_n:           int = Field(ge=0)
+    attempt_n:            int = Field(ge=0)
     prior_advice_applied: Optional[str]
-    triton_code:         str
-    compile:             CompileResult
-    correctness:         Optional[CorrectnessCheck]
-    benchmark:           Optional[Benchmark]
+    triton_code:          str
+    compile:              CompileResult
+    correctness:          Optional[CorrectnessCheck]
     judge_classification: JudgeClassification
     judge_fix_suggestion: Optional[str]
-    latency:             Latency
-    tokens:              Tokens
-    timestamp:           datetime
+    timestamp:            datetime
 
     @model_validator(mode="after")
     def _correctness_requires_compile_success(self) -> Attempt:
         if self.compile.status == CompileStatus.FAILED and self.correctness is not None:
             raise ValueError("correctness must be null when compile failed")
-        return self
-
-    @model_validator(mode="after")
-    def _benchmark_requires_correctness_passed(self) -> Attempt:
-        if self.benchmark is not None:
-            if self.correctness is None:
-                raise ValueError("benchmark requires correctness to be non-null")
-            if self.correctness.status == CorrectnessStatus.FAILED:
-                raise ValueError("benchmark must be null when correctness failed")
         return self
 
 
@@ -204,11 +167,10 @@ class Attempt(BaseModel):
 # ---------------------------------------------------------------------------
 
 class DatasetRow(BaseModel):
-    example_id:              str
-    source:                  Source
-    attempts:                list[Attempt] = Field(min_length=1)
-    final_outcome:           FinalOutcome
-    final_winning_attempt_n: Optional[int] = Field(default=None, ge=0)
+    example_id:    str
+    source:        Source
+    attempts:      list[Attempt] = Field(min_length=1)
+    final_outcome: DatasetOutcome
 
     @model_validator(mode="after")
     def _attempt_indices_are_sequential(self) -> DatasetRow:
@@ -219,38 +181,19 @@ class DatasetRow(BaseModel):
                 )
         return self
 
-    @model_validator(mode="after")
-    def _winning_attempt_consistent_with_outcome(self) -> DatasetRow:
-        terminal_without_winner = {
-            FinalOutcome.CORRECTNESS_FAILED,
-            FinalOutcome.ALL_ATTEMPTS_FAILED,
-        }
-        if self.final_outcome in terminal_without_winner:
-            if self.final_winning_attempt_n is not None:
-                raise ValueError(
-                    f"final_winning_attempt_n must be null for outcome '{self.final_outcome}'"
-                )
-        else:
-            if self.final_winning_attempt_n is None:
-                raise ValueError(
-                    f"final_winning_attempt_n must be non-null for outcome '{self.final_outcome}'"
-                )
-        return self
-
 
 # ===========================================================================
-# Eval models — schema/eval/{spec,corpus_record,record}.json
+# Eval models — schema/eval/{eval_spec,eval_corpus_record,eval_result}.json
 # ===========================================================================
 #
-# Sub-models reused from above (CompileResult, CorrectnessCheck, Latency,
-# Tokens) are identical-shape between dataset and eval. The eval-only
-# differences are EvalBenchmark (adds raw 100-iter sample arrays) and the
-# top-level wrappers (EvalSpec, EvalCorpusRecord, EvalRecord).
+# Eval pipeline is single-attempt, no judge: EvalLatency / EvalTokens track
+# per-attempt timing and token counts. EvalBenchmark adds the raw 100-iter
+# sample arrays needed for Wilcoxon / bootstrap CIs.
 
 
 class EvalSpec(BaseModel):
     """Stage-1 sampler output — fully-determined fusion spec.
-    Matches schema/eval/spec.json."""
+    Matches schema/eval/eval_spec.json."""
     spec_id:                str
     tier:                   Difficulty
     form:                   FormName
@@ -283,7 +226,7 @@ class AcceptanceMeta(BaseModel):
 
 
 class EvalCorpusRecord(BaseModel):
-    """Accepted held-out eval row. Matches schema/eval/corpus_record.json.
+    """Accepted held-out eval row. Matches schema/eval/eval_corpus_record.json.
     Lives in eval/holdout/synthetic_fusions.jsonl after the stage-1→5 pipeline."""
     example_id:   str
     spec:         EvalSpec
@@ -302,8 +245,21 @@ class EvalCorpusRecord(BaseModel):
         return self
 
 
+class EvalLatency(BaseModel):
+    """Per-stage wall times for an eval attempt. No judge_ms — eval is judged-free."""
+    generator_ms: int          = Field(ge=0)
+    compile_ms:   int          = Field(ge=0)
+    run_ms:       Optional[int] = Field(default=None, ge=0)
+
+
+class EvalTokens(BaseModel):
+    """Token counts for an eval attempt. No judge fields — eval is judged-free."""
+    generator_prompt:     int = Field(ge=0)
+    generator_completion: int = Field(ge=0)
+
+
 class EvalBenchmark(BaseModel):
-    """Same as Benchmark plus the raw 100-iter sample arrays required for
+    """Timing results with raw 100-iter sample arrays required for
     paired non-parametric tests (Wilcoxon, bootstrap CIs, IQR)."""
     triton_ms:           float = Field(gt=0)
     eager_ms:            float = Field(gt=0)
@@ -319,19 +275,16 @@ class EvalBenchmark(BaseModel):
 
 
 class EvalAttempt(BaseModel):
-    """One agent-loop iteration on an eval example. Reuses CompileResult /
-    CorrectnessCheck / Latency / Tokens; only differs from Attempt in that
-    the benchmark embeds raw timing samples (EvalBenchmark)."""
+    """Single eval attempt. No judge calls — uses EvalLatency / EvalTokens.
+    Benchmark embeds raw 100-iter sample arrays (EvalBenchmark)."""
     attempt_n:            int = Field(ge=0)
     prior_advice_applied: Optional[str]
     triton_code:          str
     compile:              CompileResult
     correctness:          Optional[CorrectnessCheck]
     benchmark:            Optional[EvalBenchmark]
-    judge_classification: JudgeClassification
-    judge_fix_suggestion: Optional[str]
-    latency:              Latency
-    tokens:               Tokens
+    latency:              EvalLatency
+    tokens:               EvalTokens
     timestamp:            datetime
 
     @model_validator(mode="after")
@@ -351,14 +304,14 @@ class EvalAttempt(BaseModel):
 
 
 class EvalRecord(BaseModel):
-    """Per-example result of one eval run. Matches schema/eval/record.json.
+    """Per-example result of one eval run. Matches schema/eval/eval_result.json.
     Written to eval/results/<model_label>/eval_rows.jsonl. The model_label
     is the parent directory; it is not stored in the record itself."""
     example_id:              str
     run_id:                  str
     spec:                    EvalSpec
     attempts:                list[EvalAttempt] = Field(min_length=1)
-    final_outcome:           FinalOutcome
+    final_outcome:           EvalFinalOutcome
     final_winning_attempt_n: Optional[int] = Field(default=None, ge=0)
 
     @model_validator(mode="after")
@@ -373,8 +326,8 @@ class EvalRecord(BaseModel):
     @model_validator(mode="after")
     def _winning_attempt_consistent_with_outcome(self) -> EvalRecord:
         terminal_without_winner = {
-            FinalOutcome.CORRECTNESS_FAILED,
-            FinalOutcome.ALL_ATTEMPTS_FAILED,
+            EvalFinalOutcome.CORRECTNESS_FAILED,
+            EvalFinalOutcome.ALL_ATTEMPTS_FAILED,
         }
         if self.final_outcome in terminal_without_winner:
             if self.final_winning_attempt_n is not None:

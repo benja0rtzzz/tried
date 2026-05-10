@@ -10,7 +10,8 @@ __all__ = [
     "Dtype",
     "Split",
     "Difficulty",
-    "FinalOutcome",
+    "DatasetOutcome",
+    "EvalFinalOutcome",
     "JudgeClassification",
     "CompileStatus",
     "CorrectnessStatus",
@@ -55,7 +56,18 @@ class Difficulty(str, Enum):
     HARD   = "hard"
 
 
-class FinalOutcome(str, Enum):
+class DatasetOutcome(str, Enum):
+    """Top-level outcome for a training dataset row.
+    compiled_correct = at least one attempt compiled and passed numerics.
+    numeric_fail     = at least one attempt compiled but none passed numerics.
+    compile_fail     = no attempt ever compiled.
+    """
+    COMPILED_CORRECT = "compiled_correct"
+    NUMERIC_FAIL     = "numeric_fail"
+    COMPILE_FAIL     = "compile_fail"
+
+
+class EvalFinalOutcome(str, Enum):
     CORRECTNESS_FAILED                    = "correctness_failed"
     COMPILED_CORRECT_SLOW                 = "compiled_correct_slow"
     COMPILED_CORRECT_PARITY               = "compiled_correct_parity"
@@ -64,15 +76,13 @@ class FinalOutcome(str, Enum):
 
 
 class JudgeClassification(str, Enum):
-    SHAPE_MISMATCH                   = "shape_mismatch"
-    DTYPE_MISMATCH                   = "dtype_mismatch"
-    INDEXING_ERROR                   = "indexing_error"
-    TRITON_API_ERROR                 = "triton_api_error"
-    CORRECTNESS_FAILED_NUMERIC       = "correctness_failed_numeric"
-    CORRECT_BUT_SLOWER_THAN_INDUCTOR = "correct_but_slower_than_inductor"
-    CORRECT_AND_COMPETITIVE          = "correct_and_competitive"
-    CORRECT_AND_FASTER               = "correct_and_faster"
-    OTHER                            = "other"
+    SHAPE_MISMATCH             = "shape_mismatch"
+    DTYPE_MISMATCH             = "dtype_mismatch"
+    INDEXING_ERROR             = "indexing_error"
+    TRITON_API_ERROR           = "triton_api_error"
+    CORRECTNESS_FAILED_NUMERIC = "correctness_failed_numeric"
+    COMPILED_CORRECT           = "compiled_correct"
+    OTHER                      = "other"
 
 
 class CompileStatus(str, Enum):
