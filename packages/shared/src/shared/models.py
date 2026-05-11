@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from shared.enums import (
     CompileStatus,
@@ -26,6 +26,7 @@ from shared.enums import (
 
 __all__ = [
     "CorpusRecord",
+    "PreflightSafeRecord",
     "Source",
     "CorrectnessStats",
     "CorrectnessCheck",
@@ -92,6 +93,64 @@ class CorpusRecord(BaseModel):
         if self.split == Split.TRAIN and self.difficulty is not None:
             raise ValueError("train examples must have difficulty=null")
         return self
+
+
+class PreflightSafeRecord(BaseModel):
+    """Slim persisted shape for generated training examples."""
+    model_config = ConfigDict(extra="forbid")
+
+    example_id:   str
+    op_category:  OpCategory
+    pytorch_code: str
+    input_shapes: list[list[int]]
+    input_dtypes: list[Dtype]
+    rng_seed:     int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _shapes_dtypes_length_match(self) -> PreflightSafeRecord:
+        if len(self.input_shapes) != len(self.input_dtypes):
+            raise ValueError(
+                f"input_shapes length ({len(self.input_shapes)}) must equal "
+                f"input_dtypes length ({len(self.input_dtypes)})"
+            )
+        return self
+
+    @classmethod
+    def from_corpus_record(cls, record: CorpusRecord) -> PreflightSafeRecord:
+        if record.split != Split.TRAIN:
+            raise ValueError(
+                f"preflight-safe rows must have split=train, got {record.split}"
+            )
+        if record.origin != "synthetic/skeleton":
+            raise ValueError(
+                "preflight-safe rows must have "
+                f"origin='synthetic/skeleton', got {record.origin!r}"
+            )
+        if record.difficulty is not None:
+            raise ValueError(
+                f"preflight-safe rows must have difficulty=None, got {record.difficulty}"
+            )
+        return cls(
+            example_id=record.example_id,
+            op_category=record.op_category,
+            pytorch_code=record.pytorch_code,
+            input_shapes=record.input_shapes,
+            input_dtypes=record.input_dtypes,
+            rng_seed=record.rng_seed,
+        )
+
+    def to_corpus_record(self) -> CorpusRecord:
+        return CorpusRecord(
+            example_id=self.example_id,
+            split=Split.TRAIN,
+            origin="synthetic/skeleton",
+            op_category=self.op_category,
+            difficulty=None,
+            pytorch_code=self.pytorch_code,
+            input_shapes=self.input_shapes,
+            input_dtypes=self.input_dtypes,
+            rng_seed=self.rng_seed,
+        )
 
 
 # ---------------------------------------------------------------------------

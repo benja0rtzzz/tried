@@ -29,9 +29,8 @@ from pathlib import Path
 
 from pydantic import ValidationError
 from shared.dataset import load_dataset
-from shared.enums import Split
 from shared.logging import get_logger
-from shared.models import CorpusRecord
+from shared.models import CorpusRecord, PreflightSafeRecord
 
 from orchestrator.dataset.agent import run_job
 from orchestrator.clients.judge_client import RateLimitError
@@ -60,7 +59,7 @@ def _load_completed_ids(dataset_path: Path) -> set[str]:
 
 
 def _load_corpus(corpus_path: Path) -> list[CorpusRecord]:
-    """Load preflight_safe.jsonl — each line is a CorpusRecord directly."""
+    """Load preflight_safe.jsonl and rehydrate fixed training metadata in code."""
     records: list[CorpusRecord] = []
     with corpus_path.open() as f:
         for i, line in enumerate(f, start=1):
@@ -68,7 +67,7 @@ def _load_corpus(corpus_path: Path) -> list[CorpusRecord]:
             if not line:
                 continue
             try:
-                records.append(CorpusRecord.model_validate_json(line))
+                records.append(PreflightSafeRecord.model_validate_json(line).to_corpus_record())
             except Exception as exc:
                 raise ValueError(f"{corpus_path}:{i} — {exc}") from exc
     return records
@@ -94,13 +93,8 @@ def main() -> None:
         sys.exit(1)
 
     _log.info("loading corpus from %s", corpus_path)
-    all_records = _load_corpus(corpus_path)
-    records = [r for r in all_records if r.split == Split.TRAIN]
-    _log.info(
-        "%d train records loaded  (total corpus: %d)",
-        len(records),
-        len(all_records),
-    )
+    records = _load_corpus(corpus_path)
+    _log.info("%d preflight-safe train record(s) loaded", len(records))
 
     # --- Resume filter (completed examples only — preflight is pre-done) ---
     already_done = _load_completed_ids(dataset_path)

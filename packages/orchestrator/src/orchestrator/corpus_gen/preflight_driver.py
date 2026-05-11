@@ -9,9 +9,9 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 from orchestrator.clients.verification_client import make_client
-from shared.enums import Dtype, OpCategory, Split, TolerancePolicy
+from shared.enums import Dtype, OpCategory, TolerancePolicy
 from shared.logging import get_logger
-from shared.models import CorpusRecord
+from shared.models import CorpusRecord, PreflightSafeRecord
 from shared.verification.api import PreflightRequest, PreflightResponse
 
 logger = get_logger(__name__)
@@ -23,7 +23,7 @@ DEFAULT_SKIPPED = Path("data/corpus_gen/preflight_skipped.jsonl")
 
 class _WithCodeRow(BaseModel):
     spec_id: str
-    candidate: CorpusRecord
+    candidate: PreflightSafeRecord
     rationale: str | None = None
 
 
@@ -114,18 +114,7 @@ def _classify_preflight(response: PreflightResponse) -> tuple[bool, str]:
 
 
 def _build_record(row: _WithCodeRow) -> CorpusRecord:
-    candidate = row.candidate
-    return CorpusRecord(
-        example_id=candidate.example_id,
-        split=Split.TRAIN,
-        origin=candidate.origin,
-        op_category=candidate.op_category,
-        difficulty=None,
-        pytorch_code=candidate.pytorch_code,
-        input_shapes=candidate.input_shapes,
-        input_dtypes=candidate.input_dtypes,
-        rng_seed=candidate.rng_seed,
-    )
+    return row.candidate.to_corpus_record()
 
 
 def run(with_code_path: Path, out_path: Path, skipped_path: Path) -> None:

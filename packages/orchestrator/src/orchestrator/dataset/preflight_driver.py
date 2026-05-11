@@ -7,7 +7,7 @@ the agent loop reads from there so no inline preflight is needed.
 
 Reads : data/corpus_gen/with_code.jsonl  (corpus_gen Block output)
 Writes:
-  data/preflight_safe.jsonl     — CorpusRecord rows that passed
+  data/preflight_safe.jsonl     — slim PreflightSafeRecord rows that passed
   data/preflight_rejected.jsonl — rejection details for genuine failures
 
 Resumable: rows already present in either output file are skipped.
@@ -25,7 +25,7 @@ from pathlib import Path
 
 from shared.enums import Dtype, OpCategory, Split, TolerancePolicy
 from shared.logging import get_logger
-from shared.models import CorpusRecord
+from shared.models import CorpusRecord, PreflightSafeRecord
 from shared.verification.api import PreflightRequest
 
 from orchestrator.clients.verification_client import make_client
@@ -75,7 +75,9 @@ def _load_corpus(path: Path) -> list[CorpusRecord]:
                 continue
             try:
                 row = json.loads(line)
-                records.append(CorpusRecord.model_validate(row["candidate"]))
+                records.append(
+                    PreflightSafeRecord.model_validate(row["candidate"]).to_corpus_record()
+                )
             except Exception as exc:
                 raise ValueError(f"{path}:{i} — {exc}") from exc
     return records
@@ -154,7 +156,8 @@ def run(
             continue
 
         if resp.passed:
-            _append(safe_path, record.model_dump_json() + "\n")
+            safe_record = PreflightSafeRecord.from_corpus_record(record)
+            _append(safe_path, safe_record.model_dump_json() + "\n")
             n_passed += 1
             _log.info("[%d/%d] pass    example_id=%s", i, len(records), record.example_id)
         else:
@@ -200,7 +203,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--safe", type=Path, default=DEFAULT_SAFE,
-        help="Output: CorpusRecord rows that passed preflight",
+        help="Output: slim PreflightSafeRecord rows that passed preflight",
     )
     parser.add_argument(
         "--rejected", type=Path, default=DEFAULT_REJECTED,

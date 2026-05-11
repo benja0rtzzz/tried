@@ -11,9 +11,8 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from shared.enums import Split
 from shared.logging import get_logger
-from shared.models import CorpusRecord
+from shared.models import PreflightSafeRecord
 
 from .ast_check import ValidationError as ASTValidationError
 from .ast_check import validate as ast_validate
@@ -32,7 +31,7 @@ DEFAULT_EVAL = Path("eval/holdout/synthetic_fusions.jsonl")
 class WithCodeRow:
     spec_id: str
     spec: SkeletonSpec
-    candidate: CorpusRecord
+    candidate: PreflightSafeRecord
     rationale: str
 
     def to_json_line(self) -> str:
@@ -123,12 +122,9 @@ def _process_one(spec: SkeletonSpec, dedup: EvalDedup) -> tuple[str, WithCodeRow
         return "rejected", RejectedRow(spec.spec_id, "dedup_eval", collision)
 
     try:
-        candidate = CorpusRecord(
+        candidate = PreflightSafeRecord(
             example_id=example_id,
-            split=Split.TRAIN,
-            origin="synthetic/skeleton",
             op_category=spec.op_category,
-            difficulty=None,
             pytorch_code=response.pytorch_code,
             input_shapes=response.input_shapes,
             input_dtypes=response.input_dtypes,
