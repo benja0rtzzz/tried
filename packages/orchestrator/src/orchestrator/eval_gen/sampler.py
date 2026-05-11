@@ -1,9 +1,9 @@
 """Stage 1 — Spec sampler.
 
-Reads the locked FORMS registry from shared.eval.forms and emits one
-EvalSpec per row of the design grid (shape * dtype * ops * form_metadata).
-Per-form QUOTAS sum to 600 — the locked overage budget for the
-generation pipeline (target 300 accepted after stage-3+4 rejections).
+Reads the locked FORMS registry from shared.eval.forms and emits EvalSpec rows
+for the medium+hard supplement run. Per-form QUOTAS currently sum to 150; easy
+forms are omitted because the earlier easy batch already had enough accepted
+rows.
 
 Output: data/eval_gen/specs.jsonl, one EvalSpec per line.
 

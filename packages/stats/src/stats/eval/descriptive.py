@@ -1,9 +1,9 @@
 """Descriptive statistics over one EvalRecord run.
 
-Covers Group B (final_outcome / speedup / op_category) and the cheap Group A
-analyses that don't need scipy: timing IQR from raw samples, baseline-compile
-descriptives, Wilson CIs on per-tier pass rate. Heavier paired tests live in
-hypothesis.py.
+Covers single-label descriptive eval analyses that don't need scipy: outcome
+distribution, Wilson CIs on per-tier pass rate, timing IQR from raw samples,
+speedup summaries, and Triton compile-time descriptives. Paired tests are
+scaffolded in hypothesis.py for the second eval run.
 """
 
 from __future__ import annotations
@@ -160,5 +160,4 @@ def triton_compile_stats(rows: list[EvalRecord]) -> dict:
         for r in winners
     ]
     return {"triton_compile_ms": _describe(triton_compile_ms)}
-
 

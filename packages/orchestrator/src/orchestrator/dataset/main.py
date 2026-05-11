@@ -16,8 +16,8 @@ Resume behaviour: on startup, already-completed example_ids are loaded from
 dataset.jsonl and filtered out so no example is processed twice. Preflight is
 handled upstream by the preflight_driver — this pipeline assumes every row in
 TRIED_CORPUS_PATH already passed the eager-vs-Inductor sanity check.
-Hitting an OpenAI rate limit stops the run cleanly with exit code 0; restart
-the process once the rate-limit window clears (or after topping up credits).
+Hitting a Codex CLI rate limit stops the run cleanly with exit code 0; restart
+the process once the rate-limit window clears.
 """
 
 from __future__ import annotations
@@ -122,10 +122,10 @@ def main() -> None:
         try:
             run_job(record, client, data_dir)
         except RateLimitError as exc:
-            _log.error("OpenAI rate limit hit: %s", exc)
+            _log.error("Codex CLI rate limit hit: %s", exc)
             _log.error(
                 "stopping cleanly — %d example(s) completed this run; "
-                "restart once the OpenAI rate-limit window clears or after topping up credits",
+                "restart once the rate-limit window clears",
                 completed,
             )
             sys.exit(0)

@@ -1,8 +1,9 @@
 """Power-analysis utilities (Week 4 material).
 
-Per docs/eval-stats.md, n is locked at 300 with 105/115/80 tier split. The
-functions here compute Cohen's h on pass-rate lift, post-hoc power on the
-observed effect, and the pre-experiment MDE table at the locked n.
+Per docs/eval-stats.md, n is locked at 437 with a 103/217/117 easy/medium/hard
+tier split. The functions here are scaffolded for Cohen's h on pass-rate lift,
+post-hoc power on the observed effect, and the pre-experiment MDE table at the
+locked n.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tried.local/schemas/eval-record.json",
   "title": "TRIED Eval Record",
-  "description": "Per-example result of one eval run on one accepted eval-set row. Eval-specific bookkeeping: run_id identifies the run, embedded EvalSpec makes the row self-contained for analysis, and each attempt's benchmark block carries the full 100-iter timing arrays needed for non-parametric paired tests (Wilcoxon signed-rank, bootstrap CIs) and IQR/quartile descriptive stats. The generator condition is identified by the parent directory `eval/results/<label>/`, not by an in-record field. The agent loop that produces these records is identical to dataset collection (same prompt, same retry budget N=5, same judge, same tolerance) — only the input set and output destination differ.",
+  "description": "Per-example result of one eval run on one accepted eval-set row. Eval-specific bookkeeping: run_id identifies the run, embedded EvalSpec makes the row self-contained for analysis, and each attempt's benchmark block carries the full 100-iter timing arrays needed for non-parametric paired tests (Wilcoxon signed-rank, bootstrap CIs) and IQR/quartile descriptive stats. The generator condition is identified by the parent directory `eval/results/<label>/`, not by an in-record field. The current eval runner measures raw generator capability: one attempt per row, no judge, no retry; final_outcome is derived from compile, correctness, and benchmark results.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -32,7 +32,7 @@
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/$defs/eval_attempt" },
-      "description": "Ordered list of generator-compile-run-judge cycles. Index in the array equals attempt_n. Same shape as DatasetRow.attempts but with raw 100-iter timing arrays embedded in the benchmark block."
+      "description": "Ordered list of eval attempts. The current eval runner writes exactly one attempt per row; index in the array equals attempt_n. Eval attempts include latency/tokens plus raw 100-iter timing arrays in the benchmark block when correctness passes."
     },
     "final_outcome": {
       "type": "string",
@@ -43,7 +43,7 @@
         "compiled_correct_faster_than_inductor",
         "all_attempts_failed"
       ],
-      "description": "Terminal state for the example. Same closed vocabulary as DatasetRow.final_outcome."
+      "description": "Terminal state for the eval example. Eval uses a richer closed vocabulary than DatasetRow so analysis can distinguish slow/parity/faster compiled-correct outcomes."
     },
     "final_winning_attempt_n": {
       "type": ["integer", "null"],
@@ -55,7 +55,7 @@
     "eval_attempt": {
       "type": "object",
       "additionalProperties": false,
-      "description": "One generator-compile-(run-benchmark)-judge cycle. Same shape as DatasetRow.attempts.item — intentionally, because the agent loop is identical — except the benchmark block embeds raw 100-iter timing arrays.",
+      "description": "One eval attempt: generator, compile, optional run, and optional benchmark. Eval has no judge fields; the benchmark block embeds raw 100-iter timing arrays.",
       "required": [
         "attempt_n",
         "prior_advice_applied",

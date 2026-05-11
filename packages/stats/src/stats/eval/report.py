@@ -1,4 +1,4 @@
-"""Render single-label and paired-comparison reports as markdown / JSON."""
+"""Render eval describe reports as markdown / JSON."""
 
 from __future__ import annotations
 

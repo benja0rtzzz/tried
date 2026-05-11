@@ -6,8 +6,8 @@
 
 ## Judge (OpenAI)
 
-**Current choice:** o4-mini.
+**Current choice:** Codex CLI profile `gpt-5-3-codex`.
 
 The judge only classifies outcomes and provides retry advice. It never generates Triton kernels.
 
-Reasoning is enabled (`reasoning_effort="high"`) for fix suggestion quality. Structured output enforced via `response_format` Pydantic model (`.beta.chat.completions.parse`). Estimated cost for the full experiment (~600 calls): ~$6–11 depending on reasoning token usage. Model and reasoning effort are hardcoded (`o4-mini`, `high`).
+The judge is invoked through `codex exec` with `--output-schema`, `--output-last-message`, `--json`, `--ephemeral`, and a read-only sandbox. The switch from the direct `o4-mini` client was cost-driven: it keeps the same judge role and structured-output contract while using the local Codex CLI profile already available for the project. The current profile is hardcoded in `packages/orchestrator/src/orchestrator/clients/judge_client.py`.

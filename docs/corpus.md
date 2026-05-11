@@ -1,18 +1,20 @@
 # Corpus
 
-Source of all PyTorch ops used in the experiment. Split into a training corpus (fed to the agent loop) and a held-out evaluation set (never touched programmatically).
+Source of all PyTorch ops used in the experiment. Split into a generated training corpus (fed to the dataset agent loop) and a held-out evaluation set (used only by the eval runner).
 
-## Training corpus (~200 examples, 50/50 split)
+## Training Corpus
 
-| Source | Count | Origin tag |
-|---|---|---|
-| Tritonbench `operators/` (extracted from `BenchmarkOperator` wrappers) | ~48 | `"tritonbench/<op_name>"` |
-| Submodule reference implementations (Liger-Kernel, Flash-Attention, FBGEMM) | ~20-30 | `"tritonbench/<op_name>"` |
-| Select ATen operator loader entries (compute-heavy subset) | ~20-30 | `"tritonbench/aten/<op>"` |
-| `torch.fx`-traced subgraphs from diverse model architectures | ~100 | `"hf/<model>"` / `"timm/<model>"` |
-| Curated standalone training patterns for underrepresented behavior buckets | as needed | `"curated/train/<name>"` |
+Current training rows are generated synthetic skeletons, not the original ~200-row TritonBench / FX / curated extraction plan.
 
-The torch.fx tracer is being built as part of the pipeline anyway. Models must be architecturally diverse to avoid deduplication waste — transformers, CNNs, SSMs, and MLPs each contribute distinct compute patterns. Curated training rows are hand-written standalone PyTorch references used to fill behavior gaps found by the quota/fingerprint audit; they are training examples, not held-out eval examples.
+Pipeline:
+
+1. `orchestrator.corpus_gen.discovery` scans cloned Triton-oriented repos and records structural observations.
+2. `orchestrator.corpus_gen.sampler` samples `SkeletonSpec` rows over op category, shape rank, dtype mix, broadcast pattern, reduction axis, fusion shape, and memory pattern.
+3. `orchestrator.corpus_gen.driver` asks Codex CLI to synthesize standalone PyTorch functions, validates them with AST checks, and deduplicates against the locked eval holdout.
+4. `orchestrator.dataset.preflight_driver` runs eager-vs-Inductor preflight and writes accepted rows.
+5. `orchestrator.dataset.main` consumes the preflight-safe file, rehydrates rows as training `CorpusRecord`s, and writes `data/dataset.jsonl`.
+
+The active training input is `data/preflight_safe.jsonl` by default (`TRIED_CORPUS_PATH` can override it). Persisted preflight-safe rows are intentionally slim: `example_id`, `op_category`, `pytorch_code`, `input_shapes`, `input_dtypes`, and `rng_seed`. When loaded for the dataset loop, they become `split="train"`, `origin="synthetic/skeleton"`, and `difficulty=null`.
 
 ## Eval corpus (437 synthetic fusions)
 
@@ -28,20 +30,20 @@ Synthetically constructed — not extracted from any existing repo. Not contamin
 | Medium | 217 | 3-op fusions, or any fusion involving a reduction |
 | Hard | 117 | 4+ ops, or complex memory patterns (attention-style, fused linear+norm+dropout) |
 
-Difficulty tiers are for eval reporting only. All failures at any tier are recorded in the dataset. `origin` for all eval examples: `"synthetic/fusion"`.
+Difficulty tiers are for eval reporting only. All failures at any tier are recorded in eval results. `origin` for all eval examples: `"synthetic/fusion"`.
 
 The original plan was 130 examples; the spec sampler produced 443 rows in `eval/holdout/synthetic_fusions.jsonl`. After the vanilla qwen run, six rows were dropped (4 duplicate `example_id`s introduced during sampling, and 2 specs that never produced an `EvalRecord`) so that holdout and result files contain the same 437 unique IDs. See `docs/decision-log.md` 2026-05-09 entry.
 
 ## Extraction rules
 
-Each training op must be extracted as a standalone, executable PyTorch function:
+Each training op must be a standalone, executable PyTorch function:
 - Executable with `import torch` only (no model state, no module dependencies)
 - Accepts tensor arguments matching `source.input_shapes` and `source.input_dtypes`
 - Returns a single tensor
 
-Store in `source.pytorch_code`. Set `source.origin` per the table above. All corpus rows have a non-null `origin`.
+Store in `source.pytorch_code`. Generated training rows use `origin="synthetic/skeleton"` after the preflight-safe shape is rehydrated for the dataset loop. All corpus rows have a non-null `origin`.
 
 ## What is NOT done
 
-- The Triton implementations inside tritonbench (`operators/*/kernels/`) are never indexed into RAG and never appear in any prompt. They exist on the Lenovo disk only as part of the tritonbench install.
-- Eval examples are never fed to the agent loop, RAG retrieval, or used as prompt examples.
+- Triton implementations from source repos are never indexed into RAG and never appear in generator prompts.
+- Eval examples are never used as training rows, RAG retrieval, or prompt examples. They are read only by `orchestrator.eval_run`.

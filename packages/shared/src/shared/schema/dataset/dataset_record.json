@@ -15,7 +15,7 @@
     "example_id": {
       "type": "string",
       "format": "uuid",
-      "description": "Stable UUID (v4) for this PyTorch op. Generated once when the example is first created. Shared across reruns of the same op; each rerun produces a new row carrying the same example_id."
+      "description": "Stable UUID for this PyTorch op. Generated once when the example is first created. Shared across reruns of the same op; each rerun produces a new row carrying the same example_id."
     },
     "source": { "$ref": "#/$defs/source" },
     "attempts": {
@@ -75,7 +75,7 @@
     "attempt": {
       "type": "object",
       "additionalProperties": false,
-      "description": "One generator-compile-(run-benchmark)-judge cycle.",
+      "description": "One generator-compile-run-judge retry cycle. Training dataset attempts do not include benchmark timings or speedups.",
       "required": [
         "attempt_n",
         "prior_advice_applied",
