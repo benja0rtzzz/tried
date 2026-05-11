@@ -99,12 +99,13 @@ class PreflightSafeRecord(BaseModel):
     """Slim persisted shape for generated training examples."""
     model_config = ConfigDict(extra="forbid")
 
-    example_id:   str
-    op_category:  OpCategory
-    pytorch_code: str
-    input_shapes: list[list[int]]
-    input_dtypes: list[Dtype]
-    rng_seed:     int = Field(ge=0)
+    example_id:       str
+    op_category:      OpCategory
+    pytorch_code:     str
+    input_shapes:     list[list[int]]
+    input_dtypes:     list[Dtype]
+    rng_seed:         int = Field(ge=0)
+    tolerance_policy: TolerancePolicy
 
     @model_validator(mode="after")
     def _shapes_dtypes_length_match(self) -> PreflightSafeRecord:
@@ -116,7 +117,9 @@ class PreflightSafeRecord(BaseModel):
         return self
 
     @classmethod
-    def from_corpus_record(cls, record: CorpusRecord) -> PreflightSafeRecord:
+    def from_corpus_record(
+        cls, record: CorpusRecord, tolerance_policy: TolerancePolicy
+    ) -> PreflightSafeRecord:
         if record.split != Split.TRAIN:
             raise ValueError(
                 f"preflight-safe rows must have split=train, got {record.split}"
@@ -137,6 +140,7 @@ class PreflightSafeRecord(BaseModel):
             input_shapes=record.input_shapes,
             input_dtypes=record.input_dtypes,
             rng_seed=record.rng_seed,
+            tolerance_policy=tolerance_policy,
         )
 
     def to_corpus_record(self) -> CorpusRecord:

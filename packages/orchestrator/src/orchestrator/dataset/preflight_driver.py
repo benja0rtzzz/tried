@@ -23,9 +23,8 @@ import os
 import sys
 from pathlib import Path
 
-from shared.enums import Dtype, OpCategory, Split, TolerancePolicy
 from shared.logging import get_logger
-from shared.models import CorpusRecord, PreflightSafeRecord
+from shared.models import PreflightSafeRecord
 from shared.verification.api import PreflightRequest
 
 from orchestrator.clients.verification_client import make_client
@@ -40,34 +39,11 @@ DEFAULT_REJECTED = Path("data/preflight_rejected.jsonl")
 
 
 # ---------------------------------------------------------------------------
-# Policy selection (mirrors agent._select_policy)
-# ---------------------------------------------------------------------------
-
-def _select_policy(dtypes: list[Dtype], op_category: OpCategory) -> TolerancePolicy:
-    fp16_dtypes = {Dtype.FLOAT16, Dtype.BFLOAT16}
-    int_dtypes  = {Dtype.INT8, Dtype.INT16, Dtype.INT32, Dtype.INT64, Dtype.BOOL}
-    dtype_set   = set(dtypes)
-
-    if dtype_set <= int_dtypes:
-        return TolerancePolicy.EXACT_INTEGER
-
-    has_fp16 = bool(dtype_set & fp16_dtypes)
-
-    if op_category == OpCategory.QUANTIZATION:
-        return TolerancePolicy.LOW_PRECISION_DEQUANT
-    if op_category == OpCategory.FUSED_ATTENTION and has_fp16:
-        return TolerancePolicy.ATTENTION_SOFTMAX_FP16
-    if op_category == OpCategory.REDUCTION:
-        return TolerancePolicy.REDUCTION_FP16 if has_fp16 else TolerancePolicy.REDUCTION_FP32
-    return TolerancePolicy.DEFAULT_FP16 if has_fp16 else TolerancePolicy.DEFAULT_FP32
-
-
-# ---------------------------------------------------------------------------
 # I/O helpers
 # ---------------------------------------------------------------------------
 
-def _load_corpus(path: Path) -> list[CorpusRecord]:
-    records: list[CorpusRecord] = []
+def _load_corpus(path: Path) -> list[PreflightSafeRecord]:
+    records: list[PreflightSafeRecord] = []
     with path.open() as f:
         for i, line in enumerate(f, start=1):
             line = line.strip()
@@ -75,9 +51,7 @@ def _load_corpus(path: Path) -> list[CorpusRecord]:
                 continue
             try:
                 row = json.loads(line)
-                records.append(
-                    PreflightSafeRecord.model_validate(row["candidate"]).to_corpus_record()
-                )
+                records.append(PreflightSafeRecord.model_validate(row["candidate"]))
             except Exception as exc:
                 raise ValueError(f"{path}:{i} — {exc}") from exc
     return records
@@ -115,12 +89,8 @@ def run(
     rejected_path: Path,
     limit: int | None,
 ) -> None:
-    all_records = _load_corpus(with_code_path)
-    records = [r for r in all_records if r.split == Split.TRAIN]
-    _log.info(
-        "loaded %d train records (total corpus: %d)",
-        len(records), len(all_records),
-    )
+    records = _load_corpus(with_code_path)
+    _log.info("loaded %d records from %s", len(records), with_code_path)
 
     if limit is not None:
         records = records[:limit]
@@ -138,14 +108,13 @@ def run(
     n_passed = n_failed = n_errors = 0
 
     for i, record in enumerate(records, start=1):
-        policy = _select_policy(record.input_dtypes, record.op_category)
         try:
             resp = client.preflight(PreflightRequest(
                 pytorch_code=record.pytorch_code,
                 input_shapes=record.input_shapes,
                 input_dtypes=record.input_dtypes,
                 rng_seed=record.rng_seed,
-                tolerance_policy=policy,
+                tolerance_policy=record.tolerance_policy,
             ))
         except Exception as exc:
             _log.error(
@@ -156,8 +125,7 @@ def run(
             continue
 
         if resp.passed:
-            safe_record = PreflightSafeRecord.from_corpus_record(record)
-            _append(safe_path, safe_record.model_dump_json() + "\n")
+            _append(safe_path, record.model_dump_json() + "\n")
             n_passed += 1
             _log.info("[%d/%d] pass    example_id=%s", i, len(records), record.example_id)
         else:

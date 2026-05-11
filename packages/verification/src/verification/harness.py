@@ -64,6 +64,15 @@ _INTEGER_DTYPES = {torch.int8, torch.int16, torch.int32, torch.int64, torch.bool
 _WARMUP_ITERS = 10
 _TIMED_ITERS = 100
 
+# Stands in for math.inf in CorrectnessStats fields. The locked schema requires
+# non-null numbers, and Python's json.dumps rejects inf. Any value this large
+# unambiguously signals "output contained NaN or ±inf".
+_INF_SENTINEL: float = 1e38
+
+
+def _finite_stat(v: float) -> float:
+    return v if math.isfinite(v) else _INF_SENTINEL
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -150,9 +159,9 @@ def _compute_stats(
     if nan_count > 0:
         total = max(c.numel(), 1)
         return CorrectnessStats(
-            max_abs_diff=math.inf,
-            max_rel_diff=math.inf,
-            mean_abs_diff=math.inf,
+            max_abs_diff=_INF_SENTINEL,
+            max_rel_diff=_INF_SENTINEL,
+            mean_abs_diff=_INF_SENTINEL,
             n_elements_exceeding_tol=nan_count,
             pct_elements_exceeding_tol=100.0 * nan_count / total,
         ), False
@@ -185,9 +194,9 @@ def _compute_stats(
         if bad > 0:
             total = max(c.numel(), 1)
             return CorrectnessStats(
-                max_abs_diff=math.inf,
-                max_rel_diff=math.inf,
-                mean_abs_diff=math.inf,
+                max_abs_diff=_INF_SENTINEL,
+                max_rel_diff=_INF_SENTINEL,
+                mean_abs_diff=_INF_SENTINEL,
                 n_elements_exceeding_tol=bad,
                 pct_elements_exceeding_tol=100.0 * bad / total,
             ), False
@@ -204,9 +213,9 @@ def _compute_stats(
     total = max(c.numel(), 1)
 
     return CorrectnessStats(
-        max_abs_diff=float(abs_diff.max().item()) if abs_diff.numel() > 0 else 0.0,
-        max_rel_diff=float(rel_diff.max().item()) if rel_diff.numel() > 0 else 0.0,
-        mean_abs_diff=float(abs_diff.mean().item()) if abs_diff.numel() > 0 else 0.0,
+        max_abs_diff=_finite_stat(float(abs_diff.max().item())) if abs_diff.numel() > 0 else 0.0,
+        max_rel_diff=_finite_stat(float(rel_diff.max().item())) if rel_diff.numel() > 0 else 0.0,
+        mean_abs_diff=_finite_stat(float(abs_diff.mean().item())) if abs_diff.numel() > 0 else 0.0,
         n_elements_exceeding_tol=n_exceed,
         pct_elements_exceeding_tol=100.0 * n_exceed / total,
     ), n_exceed == 0

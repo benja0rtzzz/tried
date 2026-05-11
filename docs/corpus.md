@@ -4,7 +4,7 @@ Source of all PyTorch ops used in the experiment. Split into a generated trainin
 
 ## Training Corpus
 
-Current training rows are generated synthetic skeletons, not the original ~200-row TritonBench / FX / curated extraction plan.
+Current training rows are generated synthetic skeletons.
 
 Pipeline:
 
