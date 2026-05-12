@@ -17,8 +17,8 @@ Each row carries the full `EvalSpec` (so `tier`, `form`, and ops are local) and 
 | Course week | Source material | Analyses produced |
 |---|---|---|
 | 1 — Fundamentos de Probabilidad | Sample spaces, conditional probability, Bayes, expected value | Outcome distribution, conditional `P(faster | tier)`, expected speedup |
-| 2 — Distribuciones y Estadística Descriptiva | Bernoulli, Binomial, CLT, IQR, descriptive stats | Per-tier pass rate w/ Binomial CI, per-method timing distributions w/ Q1/median/Q3/IQR, outlier flagging, log-speedup stats, Triton compile-time stats |
-| 3 — Pruebas de Hipótesis | H₀/H₁, p-values, paired t-test | Planned after second eval: **paired McNemar** on pass rate, **paired Wilcoxon signed-rank** on log-speedup, paired t-test on log Triton compile time |
+| 2 — Distribuciones y Estadística Descriptiva | Bernoulli, Binomial, CLT, IQR, descriptive stats | Per-tier pass rate w/ Binomial CI, per-method timing distributions w/ Q1/median/Q3/IQR, outlier flagging, log-speedup stats, Triton static-validation latency stats |
+| 3 — Pruebas de Hipótesis | H₀/H₁, p-values, paired t-test | Planned after second eval: **paired McNemar** on pass rate, **paired Wilcoxon signed-rank** on log-speedup. A paired t-test should use a metric other than `latency.compile_ms`, because `/compile` is static validation rather than shape-aware Triton launch compilation. |
 | 4 — Power Analysis | Cohen's d/h, sample-size calc, post-hoc power | Planned after second eval: pre-experiment MDE at locked n=437, post-hoc power on observed effect, Cohen's h on pass-rate lift |
 
 ## Group A — analyses that need new eval-schema fields
@@ -48,8 +48,8 @@ No new schema fields needed beyond the eval record itself.
 | Cohen's h on pass-rate lift (Week 4, planned) | derived from McNemar inputs |
 | Post-hoc power on observed effect (Week 4, planned) | derived from observed effect size + n |
 | Pre-experiment MDE at locked n (Week 4) | n only (437, or per-tier 103 / 217 / 117) |
-| Triton compile-time descriptive stats (Week 2) | `attempts[winning].latency.compile_ms` |
-| **Paired t-test on log Triton compile time** (Week 3, planned) | `attempts[winning].latency.compile_ms`, joined on `example_id` |
+| Triton static-validation latency descriptives (Week 2) | `attempts[winning].latency.compile_ms` |
+| **Paired t-test target** (Week 3, planned) | TBD; do not use `attempts[winning].latency.compile_ms` as Triton compile time unless `/compile` becomes shape-aware. |
 | Cross-tab outcome × form/category × tier (Week 1) | `final_outcome` + `spec.form` + `spec.tier`; category can be derived from `shared.eval.forms.FORMS` when needed |
 
 ## Sample-size note (recorded once, not recomputed per run)
@@ -66,7 +66,7 @@ packages/stats/src/stats/
 │   └── summary.py                 # one main printer (replaces the spread-out scripts)
 └── eval/
     ├── load.py                    # load EvalRecord JSONL, join two labels by example_id
-    ├── descriptive.py             # Group A descriptive (timing IQR, compile times)
+    ├── descriptive.py             # Group A descriptive (timing IQR, static-validation latency)
     │                              # + Group B descriptive (pass rate, conditionals)
     ├── hypothesis.py              # Scaffold: paired McNemar, paired Wilcoxon, paired t-test
     ├── power.py                   # Scaffold: Cohen's h, post-hoc power, pre-experiment MDE

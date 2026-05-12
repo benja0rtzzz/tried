@@ -3,7 +3,7 @@
 Headline tests per docs/eval-stats.md:
 - paired McNemar on pass rate (final_outcome ∈ success set, joined by example_id)
 - paired Wilcoxon signed-rank on log-speedup (winning-attempt speedup_vs_inductor)
-- paired t-test on log Triton compile time (attempts[winning].latency.compile_ms)
+- paired t-test target TBD; latency.compile_ms is only static /compile validation
 
 Inputs are the joined pairs returned by stats.eval.load.join_labels.
 """
@@ -29,7 +29,9 @@ def wilcoxon_log_speedup(
 
 def paired_t_log_triton_compile(pairs: list[tuple[EvalRecord, EvalRecord]]) -> dict:
     """Paired t-test on log(latency.compile_ms) of the winning attempt on each
-    side. Triton compile is genuinely cold per attempt (no shared cache like
-    the dropped Inductor baseline), so the test measures real compile-cost
-    differences between vanilla and fine-tuned generators."""
+    side.
+
+    Deprecated scaffold: latency.compile_ms is static /compile validation, not
+    shape-aware Triton launch compilation. Choose a different paired t-test
+    target before implementing this."""
     raise NotImplementedError

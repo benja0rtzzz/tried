@@ -2,25 +2,31 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tried.local/schemas/dataset-row.json",
   "title": "TRIED Dataset Row",
-  "description": "A single PyTorch-to-Triton translation example with all attempts, verification results, and judge decisions. Each attempt carries its own judge_classification so the terminal outcome is derivable from the attempts list.",
+  "description": "A single PyTorch-to-Triton translation example with all attempts, verification results, deterministic failure metadata, and judge decisions for failed attempts. Passing attempts skip the judge.",
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "dataset_id",
     "example_id",
     "source",
     "attempts",
     "final_outcome"
   ],
   "properties": {
+    "dataset_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Stable UUID for this exact dataset task. Derived from the full source row: source example_id, op category, PyTorch code, input shapes, input dtypes, rng_seed, and tolerance_policy. Resume uses this field."
+    },
     "example_id": {
       "type": "string",
       "format": "uuid",
-      "description": "Stable UUID for this PyTorch op. Generated once when the example is first created. Shared across reruns of the same op; each rerun produces a new row carrying the same example_id."
+      "description": "Stable source/code UUID from corpus generation. Multiple dataset rows may share this value when the same PyTorch code is exercised with different shapes, seeds, or tolerance policies."
     },
     "source": { "$ref": "#/$defs/source" },
     "attempts": {
       "type": "array",
-      "description": "Ordered list of generator-compile-run-judge cycles. Index in the array equals attempt_n.",
+      "description": "Ordered list of generator-compile-run attempts. Failed attempts include judge labels and advice; passing attempts skip the judge. Index in the array equals attempt_n.",
       "minItems": 1,
       "items": { "$ref": "#/$defs/attempt" }
     },
@@ -30,16 +36,23 @@
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Immutable inputs that define this example. Copied verbatim from the corpus record (eval_and_training.json) when the agent loop starts.",
+      "description": "Immutable inputs that define this example. Copied from the Step 5 training input row (preflight_safe_record.json) when the agent loop starts.",
       "required": [
+        "example_id",
         "pytorch_code",
         "origin",
         "input_shapes",
         "input_dtypes",
         "rng_seed",
-        "op_category"
+        "op_category",
+        "tolerance_policy"
       ],
       "properties": {
+        "example_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Same source/code UUID as the parent row's example_id."
+        },
         "pytorch_code": {
           "type": "string",
           "description": "The PyTorch function or module source the generator is asked to translate. Must be standalone and executable without imports beyond torch."
@@ -69,20 +82,28 @@
           "minimum": 0,
           "description": "RNG seed used to generate input tensors. Fixed per example for reproducibility."
         },
-        "op_category": { "$ref": "#/$defs/op_category" }
+        "op_category": { "$ref": "#/$defs/op_category" },
+        "tolerance_policy": {
+          "$ref": "#/$defs/tolerance_policy",
+          "description": "Policy selected during corpus generation/preflight and reused by the dataset verification loop. It is copied from the source row, not recomputed."
+        }
       }
     },
     "attempt": {
       "type": "object",
       "additionalProperties": false,
-      "description": "One generator-compile-run-judge retry cycle. Training dataset attempts do not include benchmark timings or speedups.",
+      "description": "One generator-compile-run retry cycle. Failed attempts include judge classification/root-cause/repair-action/advice. Passing attempts set judge fields to null. Training dataset attempts do not include benchmark timings or speedups.",
       "required": [
         "attempt_n",
         "prior_advice_applied",
+        "patch_from_previous",
         "triton_code",
         "compile",
+        "failure_symptom",
         "correctness",
         "judge_classification",
+        "judge_root_cause",
+        "judge_repair_action",
         "judge_fix_suggestion",
         "timestamp"
       ],
@@ -95,6 +116,10 @@
         "prior_advice_applied": {
           "type": ["string", "null"],
           "description": "The judge_fix_suggestion from attempt_n - 1 that this attempt acted on. Null on attempt_n == 0 or if the previous attempt yielded no suggestion."
+        },
+        "patch_from_previous": {
+          "type": ["string", "null"],
+          "description": "Unified diff from the previous attempt's Triton code to this attempt's Triton code. Null on attempt_n == 0."
         },
         "triton_code": {
           "type": "string",
@@ -118,12 +143,43 @@
             { "$ref": "#/$defs/correctness_check" },
             { "type": "null" }
           ],
-          "description": "Numeric agreement between candidate Triton output and reference outputs. Null iff compile.status == 'failed'."
+          "description": "Numeric agreement between candidate Triton output and reference outputs. Null when compile failed or /run failed before producing correctness stats."
         },
-        "judge_classification": { "$ref": "#/$defs/judge_classification" },
+        "run_error": {
+          "type": ["string", "null"],
+          "description": "Runtime, launch, timeout, or verification-harness error from /run when compile.status == 'success' but no correctness stats were produced. Null for compile failures and clean numeric pass/fail checks."
+        },
+        "failure_symptom": {
+          "anyOf": [
+            { "$ref": "#/$defs/failure_symptom" },
+            { "type": "null" }
+          ],
+          "description": "Deterministic normalized symptom parsed from compile/run/correctness output. Null when the attempt passed."
+        },
+        "judge_classification": {
+          "anyOf": [
+            { "$ref": "#/$defs/judge_classification" },
+            { "type": "null" }
+          ],
+          "description": "Judge's classification for failed attempts. Null when the attempt passed."
+        },
+        "judge_root_cause": {
+          "anyOf": [
+            { "$ref": "#/$defs/judge_root_cause" },
+            { "type": "null" }
+          ],
+          "description": "Judge-derived semantic root cause for failed attempts. Null when the attempt passed."
+        },
+        "judge_repair_action": {
+          "anyOf": [
+            { "$ref": "#/$defs/judge_repair_action" },
+            { "type": "null" }
+          ],
+          "description": "Judge-derived normalized repair action for failed attempts. Null when the attempt passed."
+        },
         "judge_fix_suggestion": {
           "type": ["string", "null"],
-          "description": "Natural-language advice from the judge for the next attempt. Null when no further retry will happen or the judge declined to advise."
+          "description": "Natural-language advice from the judge. For non-terminal failed attempts this is consumed by the next retry; for terminal failed attempts it is retained as a label. Null when the attempt passed."
         },
         "timestamp": {
           "type": "string",
@@ -135,63 +191,21 @@
     "correctness_check": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Candidate-vs-eager (primary) and candidate-vs-Inductor (secondary) agreement. All 10 numbers recorded per benchmarking-protocol step 5.",
-      "required": ["status", "tolerance_policy_used", "vs_eager", "vs_inductor"],
+      "description": "Candidate-vs-reference correctness outcome. Training dataset rows record the pass/fail gate and policy only; detailed numeric stats are eval-only.",
+      "required": ["status", "tolerance_policy_used"],
       "properties": {
         "status": {
           "type": "string",
           "enum": ["passed", "failed"],
-          "description": "'passed' iff vs_eager is within the tolerance_policy_used."
+          "description": "'passed' iff the candidate agreed with both eager and Inductor under tolerance_policy_used."
         },
-        "tolerance_policy_used": { "$ref": "#/$defs/tolerance_policy" },
-        "vs_eager": { "$ref": "#/$defs/correctness_stats" },
-        "vs_inductor": { "$ref": "#/$defs/correctness_stats" }
-      }
-    },
-    "correctness_stats": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Five-number numeric agreement summary. Used in correctness.vs_eager and correctness.vs_inductor.",
-      "required": [
-        "max_abs_diff",
-        "max_rel_diff",
-        "mean_abs_diff",
-        "n_elements_exceeding_tol",
-        "pct_elements_exceeding_tol"
-      ],
-      "properties": {
-        "max_abs_diff": {
-          "type": "number",
-          "minimum": 0,
-          "description": "max(|a - b|) over all elements."
-        },
-        "max_rel_diff": {
-          "type": "number",
-          "minimum": 0,
-          "description": "max(|a - b| / (|b| + eps)) over all elements. eps defined in tolerance.py."
-        },
-        "mean_abs_diff": {
-          "type": "number",
-          "minimum": 0,
-          "description": "mean(|a - b|) over all elements."
-        },
-        "n_elements_exceeding_tol": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Count of elements that fail the tolerance policy."
-        },
-        "pct_elements_exceeding_tol": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 100,
-          "description": "n_elements_exceeding_tol as a percentage of total elements."
-        }
+        "tolerance_policy_used": { "$ref": "#/$defs/tolerance_policy" }
       }
     },
     "dataset_outcome": {
       "type": "string",
-      "enum": ["compiled_correct", "numeric_fail", "compile_fail"],
-      "description": "Top-level result of the agent loop. compiled_correct = at least one attempt compiled and passed numerics. numeric_fail = at least one attempt compiled but none passed numerics. compile_fail = no attempt ever compiled."
+      "enum": ["compiled_correct", "numeric_fail", "runtime_fail", "compile_fail"],
+      "description": "Top-level result of the agent loop. compiled_correct = at least one attempt compiled and passed numerics. numeric_fail = at least one attempt produced correctness stats but none passed. runtime_fail = at least one attempt passed /compile but failed during /run before correctness stats. compile_fail = no attempt passed the compile endpoint."
     },
     "dtype": {
       "type": "string",
@@ -237,6 +251,70 @@
         "other"
       ],
       "description": "Judge's classification of an attempt's outcome. Closed vocabulary. The judge is constrained at call time to values in this set."
+    },
+    "judge_root_cause": {
+      "type": "string",
+      "enum": [
+        "raw_data_ptr_passed_as_pointer",
+        "invalid_pointer_arithmetic_or_offset_dtype",
+        "runtime_value_used_as_constexpr",
+        "broadcast_or_mask_rank_mismatch",
+        "wrong_launch_grid_or_meta_signature",
+        "wrong_program_id_mapping",
+        "wrong_linearization_or_stride",
+        "wrong_reduction_axis_or_extent",
+        "wrong_matmul_tile_or_accumulation",
+        "dtype_cast_or_dot_operand_mismatch",
+        "wrong_output_shape_or_return_type",
+        "invalid_triton_api_usage",
+        "host_wrapper_shape_logic_error",
+        "memory_safety_or_out_of_bounds",
+        "unsupported_python_construct_in_kernel",
+        "unknown"
+      ],
+      "description": "Judge-derived semantic root-cause label for a failed attempt. Null on passed attempts."
+    },
+    "judge_repair_action": {
+      "type": "string",
+      "enum": [
+        "replace_data_ptr_with_tensor_args",
+        "cast_offsets_or_strides_to_int32",
+        "make_dimension_constexpr_or_tile",
+        "fix_mask_broadcast_rank",
+        "fix_launch_grid_or_meta_args",
+        "fix_program_id_mapping",
+        "fix_linear_indexing_or_strides",
+        "fix_reduction_axis_or_loop_extent",
+        "fix_matmul_tiling_or_accumulator",
+        "add_or_change_dtype_cast",
+        "fix_output_allocation_shape_or_return",
+        "replace_invalid_triton_api",
+        "fix_host_wrapper_shape_logic",
+        "add_bounds_masking",
+        "remove_unsupported_kernel_construct",
+        "unknown"
+      ],
+      "description": "Judge-derived normalized repair action for a failed attempt. Null on passed attempts."
+    },
+    "failure_symptom": {
+      "type": "string",
+      "enum": [
+        "numeric_mismatch",
+        "unsupported_ptr_type",
+        "incompatible_block_shape",
+        "non_constexpr_arange_bound",
+        "undefined_symbol",
+        "unsupported_language_construct",
+        "launch_signature_mismatch",
+        "invalid_triton_api",
+        "invalid_output_type",
+        "host_shape_error",
+        "cuda_illegal_memory_access",
+        "timeout",
+        "triton_compilation_error",
+        "python_runtime_error"
+      ],
+      "description": "Deterministic surface failure symptom parsed from verifier output. This is not a semantic root-cause label."
     },
     "tolerance_policy": {
       "type": "string",

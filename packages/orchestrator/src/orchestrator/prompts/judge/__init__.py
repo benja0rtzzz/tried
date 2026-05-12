@@ -17,6 +17,7 @@ class AttemptContext(TypedDict):
     triton_code:        str
     compile_status:     str        # "success" | "failed"
     compile_error:      str | None
+    run_error:          str | None
     correctness_status: str | None # "passed" | "failed" | None
     max_abs_diff:       float | None
     pct_exceeding:      float | None
@@ -39,6 +40,10 @@ def _render_attempt(a: AttemptContext, is_current: bool) -> str:
                 f" pct_exceeding={a['pct_exceeding']:.1f}%"
             )
 
+    run_error_line = ""
+    if a["run_error"]:
+        run_error_line = f"Run error: {a['run_error']}"
+
     fix_line = ""
     if a["fix_suggestion"]:
         fix_line = f"Fix suggested: {a['fix_suggestion']}"
@@ -48,7 +53,7 @@ def _render_attempt(a: AttemptContext, is_current: bool) -> str:
         f"Triton code:\n{a['triton_code']}",
         compile_line,
     ]
-    for line in (correctness_line, fix_line):
+    for line in (run_error_line, correctness_line, fix_line):
         if line:
             parts.append(line)
 

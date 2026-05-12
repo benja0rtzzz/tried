@@ -9,7 +9,7 @@
 
 ## Dataset Agent Loop
 
-The training dataset pipeline consumes preflight-safe synthetic skeleton rows from `data/preflight_safe.jsonl`. The eager-vs-Inductor preflight is done upstream by `orchestrator.dataset.preflight_driver`; rows reaching `orchestrator.dataset.main` are assumed clean.
+The training dataset pipeline consumes preflight-safe synthetic skeleton rows from `data/preflight_safe.jsonl`. The eager-vs-Inductor preflight is done upstream by `orchestrator.dataset.preflight_driver`; rows reaching `orchestrator.dataset.main` are assumed clean. The `tolerance_policy` selected before preflight is carried in the row and reused by the dataset loop; it is not recomputed there.
 
 ```
 PyTorch input
@@ -17,13 +17,13 @@ PyTorch input
     ▼
 Orchestrator (MacBook)
     ├─ calls Ollama → local LLM generates Triton candidate
-    ├─ HTTP POST /compile   ──► Lenovo FastAPI  (synchronous)
+    ├─ HTTP POST /compile   ──► Lenovo FastAPI  (static Triton validation)
     ├─ HTTP POST /run       ──► Lenovo FastAPI  (synchronous)
-    ├─ if failed: call Codex CLI judge (`gpt-5-3-codex`) → advice
-    └─ retry (max N=5), record every attempt
+    ├─ if verification failed: call Codex CLI judge (`gpt-5-3-codex`) → labels/advice
+    └─ retry (max N=3), record every attempt
 ```
 
-Dataset rows record compile, correctness, judge classification, and retry advice. They do **not** record benchmark timings or speedups; benchmarking is eval-only.
+Dataset rows record `/compile`, `/run` errors, compact correctness outcome, deterministic failure symptoms/patches, and judge classification/root-cause/repair-action/advice for failed attempts. A dataset job is `compiled_correct` only when `/run` reports `correctness_status=passed` against both eager and Inductor under the row's tolerance policy. They do **not** record benchmark timings, speedups, or detailed correctness stats; those are eval-only.
 
 ## Eval Run Loop
 
@@ -54,6 +54,8 @@ All endpoints accept and return JSON. Triton/PyTorch source is sent as a string 
 | `POST /run` | Synchronous | `run_response` |
 | `POST /benchmark` | Async | `job_accepted` (HTTP 202) |
 | `GET /jobs/{job_id}` | Synchronous | `job_status` |
+
+`/preflight`, `/compile`, and `/run` execute inside a worker subprocess that is terminated after each request. `/compile` is static validation: it imports the candidate, requires a `@triton.jit` kernel, and finds the callable wrapper. Shape-aware launch compilation happens in `/run`, so launch-time JIT failures are runtime failures. This keeps bad Triton imports, launch-time JIT failures, CUDA illegal-address failures, and timeouts from corrupting the next attempt's CUDA context or the FastAPI server process.
 
 ## Async benchmark pattern
 

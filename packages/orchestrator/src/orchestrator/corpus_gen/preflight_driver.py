@@ -1,4 +1,9 @@
-"""Run /preflight on synthesized corpus candidates and append survivors."""
+"""Run /preflight on synthesized corpus candidates and append slim survivors.
+
+This module is kept for compatibility with the older corpus_gen entry point.
+The active Step 5 preflight command is orchestrator.dataset.preflight_driver;
+both write PreflightSafeRecord rows to data/preflight_safe.jsonl.
+"""
 from __future__ import annotations
 
 import argparse
@@ -9,16 +14,15 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 from orchestrator.clients.verification_client import make_client
-from shared.enums import Dtype, OpCategory, TolerancePolicy
 from shared.logging import get_logger
-from shared.models import CorpusRecord, PreflightSafeRecord
+from shared.models import PreflightSafeRecord
 from shared.verification.api import PreflightRequest, PreflightResponse
 
 logger = get_logger(__name__)
 
 DEFAULT_WITH_CODE = Path("data/corpus_gen/with_code.jsonl")
-DEFAULT_OUT = Path("data/corpus_train.jsonl")
-DEFAULT_SKIPPED = Path("data/corpus_gen/preflight_skipped.jsonl")
+DEFAULT_OUT = Path("data/preflight_safe.jsonl")
+DEFAULT_SKIPPED = Path("data/preflight_rejected.jsonl")
 
 
 class _WithCodeRow(BaseModel):
@@ -79,25 +83,6 @@ def _append_jsonl(path: Path, line: str) -> None:
         f.flush()
 
 
-def _select_policy(dtypes: list[Dtype], op_category: OpCategory) -> TolerancePolicy:
-    fp16_dtypes = {Dtype.FLOAT16, Dtype.BFLOAT16}
-    int_dtypes = {Dtype.INT8, Dtype.INT16, Dtype.INT32, Dtype.INT64, Dtype.BOOL}
-    dtype_set = set(dtypes)
-
-    if dtype_set <= int_dtypes:
-        return TolerancePolicy.EXACT_INTEGER
-
-    has_fp16 = bool(dtype_set & fp16_dtypes)
-
-    if op_category == OpCategory.QUANTIZATION:
-        return TolerancePolicy.LOW_PRECISION_DEQUANT
-    if op_category == OpCategory.FUSED_ATTENTION and has_fp16:
-        return TolerancePolicy.ATTENTION_SOFTMAX_FP16
-    if op_category == OpCategory.REDUCTION:
-        return TolerancePolicy.REDUCTION_FP16 if has_fp16 else TolerancePolicy.REDUCTION_FP32
-    return TolerancePolicy.DEFAULT_FP16 if has_fp16 else TolerancePolicy.DEFAULT_FP32
-
-
 def _classify_preflight(response: PreflightResponse) -> tuple[bool, str]:
     if response.error_message is not None:
         return False, f"harness error: {response.error_message}"
@@ -113,8 +98,8 @@ def _classify_preflight(response: PreflightResponse) -> tuple[bool, str]:
     return True, ""
 
 
-def _build_record(row: _WithCodeRow) -> CorpusRecord:
-    return row.candidate.to_corpus_record()
+def _build_record(row: _WithCodeRow) -> PreflightSafeRecord:
+    return row.candidate
 
 
 def run(with_code_path: Path, out_path: Path, skipped_path: Path) -> None:
@@ -133,7 +118,7 @@ def run(with_code_path: Path, out_path: Path, skipped_path: Path) -> None:
     skipped = 0
     for i, row in enumerate(rows, start=1):
         record = _build_record(row)
-        policy = _select_policy(record.input_dtypes, record.op_category)
+        policy = record.tolerance_policy
 
         try:
             response = client.preflight(

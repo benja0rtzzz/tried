@@ -5,6 +5,7 @@ Error handling is left to the agent loop.
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 
@@ -13,6 +14,9 @@ import ollama
 from orchestrator.prompts.generator import SYSTEM, build_user_prompt
 
 _MODEL = "qwen2.5-coder:14b"
+_TIMEOUT_S = 120.0
+_NUM_PREDICT = 2048
+_CLIENT = ollama.Client(timeout=_TIMEOUT_S)
 
 @dataclass
 class GeneratorResult:
@@ -40,13 +44,16 @@ def generate(
     )
 
     t0 = time.monotonic()
-    response = ollama.chat(
+    response = _CLIENT.chat(
         model=_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM},
             {"role": "user",   "content": user_msg},
         ],
-        options={"temperature": 0},
+        options={
+            "temperature": 0,
+            "num_predict": _NUM_PREDICT,
+        },
     )
     latency_ms = int((time.monotonic() - t0) * 1000)
 

@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tried.local/schemas/preflight-safe-record.json",
+  "title": "TRIED Preflight-Safe Training Record",
+  "description": "One Step 5 training input row consumed by orchestrator.dataset.main from data/preflight_safe.jsonl. This schema mirrors shared.models.PreflightSafeRecord: a slim generated training task that already passed eager-vs-Inductor preflight. It is not shared with eval; held-out eval rows use schema/eval/eval_corpus_record.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "example_id",
+    "op_category",
+    "pytorch_code",
+    "input_shapes",
+    "input_dtypes",
+    "rng_seed",
+    "tolerance_policy"
+  ],
+  "properties": {
+    "example_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Source/code UUID from corpus generation. Multiple preflight-safe rows may share this when the same PyTorch code is exercised with different shapes, seeds, or tolerance policies."
+    },
+    "op_category": { "$ref": "#/$defs/op_category" },
+    "pytorch_code": {
+      "type": "string",
+      "description": "Materialized PyTorch function source generated for training. The row has already passed AST checks and preflight before reaching data/preflight_safe.jsonl."
+    },
+    "input_shapes": {
+      "type": "array",
+      "description": "Shape of each input tensor, as a list of integer lists.",
+      "minItems": 1,
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "items": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "input_dtypes": {
+      "type": "array",
+      "description": "Dtype of each input tensor. Length must match input_shapes.",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/dtype" }
+    },
+    "rng_seed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "RNG seed used to generate input tensors. Fixed per dataset task for reproducibility."
+    },
+    "tolerance_policy": {
+      "$ref": "#/$defs/tolerance_policy",
+      "description": "Policy selected during corpus generation/preflight and reused by the dataset verification loop. The dataset loop must not recompute this."
+    }
+  },
+  "$defs": {
+    "dtype": {
+      "type": "string",
+      "enum": [
+        "float16",
+        "float32",
+        "bfloat16",
+        "float64",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "bool"
+      ],
+      "description": "Input tensor dtype. Closed vocabulary."
+    },
+    "op_category": {
+      "type": "string",
+      "enum": [
+        "elementwise_chain",
+        "reduction",
+        "matmul",
+        "convolution",
+        "fused_attention",
+        "normalization",
+        "activation",
+        "loss",
+        "embedding",
+        "quantization",
+        "other"
+      ],
+      "description": "Coarse op family. Closed vocabulary."
+    },
+    "tolerance_policy": {
+      "type": "string",
+      "enum": [
+        "default_fp32",
+        "default_fp16",
+        "reduction_fp16",
+        "reduction_fp32",
+        "exact_integer",
+        "masked_logits",
+        "attention_softmax_fp16",
+        "recurrent_scan_fp16",
+        "low_precision_dequant",
+        "fp8_cast"
+      ],
+      "description": "Key into packages/shared/src/shared/verification/tolerance.py."
+    }
+  }
+}

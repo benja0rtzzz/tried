@@ -38,6 +38,7 @@
       "type": "string",
       "enum": [
         "correctness_failed",
+        "runtime_fail",
         "compiled_correct_slow",
         "compiled_correct_parity",
         "compiled_correct_faster_than_inductor",
@@ -48,7 +49,7 @@
     "final_winning_attempt_n": {
       "type": ["integer", "null"],
       "minimum": 0,
-      "description": "The attempt_n whose result is recorded in final_outcome. Null iff final_outcome is in {correctness_failed, all_attempts_failed}."
+      "description": "The attempt_n whose result is recorded in final_outcome. Null iff final_outcome is in {correctness_failed, runtime_fail, all_attempts_failed}."
     }
   },
   "$defs": {
@@ -75,7 +76,7 @@
         },
         "prior_advice_applied": {
           "type": ["string", "null"],
-          "description": "The judge_fix_suggestion from attempt_n - 1 that this attempt acted on. Null on attempt_n == 0 or if the previous attempt yielded no suggestion."
+          "description": "Always null for eval rows. Present only to keep the attempt shape close to training rows; eval is single-attempt and has no judge feedback loop."
         },
         "triton_code": {
           "type": "string",
@@ -98,7 +99,11 @@
             { "$ref": "#/$defs/correctness_check" },
             { "type": "null" }
           ],
-          "description": "Numeric agreement between candidate Triton output and reference outputs. Null iff compile.status == 'failed'."
+          "description": "Numeric agreement between candidate Triton output and reference outputs. Null when compile failed or /run failed before producing correctness stats."
+        },
+        "run_error": {
+          "type": ["string", "null"],
+          "description": "Runtime, launch, timeout, or verification-harness error from /run when compile.status == 'success' but no correctness stats were produced. Null for compile failures and clean numeric pass/fail checks."
         },
         "benchmark": {
           "anyOf": [
@@ -120,7 +125,7 @@
             "compile_ms": {
               "type": "integer",
               "minimum": 0,
-              "description": "Wall time of POST /compile on the verification server, in milliseconds. Captures Triton compile cost."
+              "description": "Wall time of POST /compile on the verification server, in milliseconds. This captures static import/JIT-kernel validation, not shape-aware launch compilation."
             },
             "run_ms": {
               "type": ["integer", "null"],

@@ -83,7 +83,7 @@ def render_describe_markdown(label: str, sections: dict) -> str:
     print(tabulate(rows, headers=headers, tablefmt="pipe"), file=out)
     print(file=out)
 
-    print("## Triton compile time (winning rows)", file=out)
+    print("## Triton static validation latency (winning rows)", file=out)
     tc = sections["triton_compile_stats"]
     rows = [
         _describe_row("triton_compile_ms", tc["triton_compile_ms"]),

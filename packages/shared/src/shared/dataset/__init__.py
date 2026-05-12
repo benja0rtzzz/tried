@@ -4,15 +4,13 @@ Dataset I/O for the TRIED experiment.
 Public API
 ----------
 load_corpus_train   — read one or more corpus JSONL files into CorpusRecord list
-merge_corpus        — merge + deduplicate multiple corpus files by example_id and write to data/
+merge_corpus        — merge + deduplicate multiple corpus files by dataset_id and write to data/
 load_dataset        — read the dataset JSONL into DatasetRow list
 append_dataset_row  — validate and append one completed row to the dataset
-append_skipped      — append a skipped-example entry to skipped.jsonl
 """
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -27,7 +25,6 @@ __all__ = [
     "merge_corpus",
     "load_dataset",
     "append_dataset_row",
-    "append_skipped",
 ]
 
 # ---------------------------------------------------------------------------
@@ -58,7 +55,7 @@ def merge_corpus(
     *source_paths: str | Path,
     output_path: str | Path,
 ) -> list[CorpusRecord]:
-    """Merge multiple corpus JSONL files, deduplicate by example_id, write output.
+    """Merge multiple corpus JSONL files, deduplicate by dataset_id, write output.
 
     Dedup strategy: first-seen wins (earlier paths take precedence).
     Skipped duplicates are reported to stdout so the scraper operator knows.
@@ -71,13 +68,15 @@ def merge_corpus(
     seen: dict[str, CorpusRecord] = {}
     for src in source_paths:
         for record in load_corpus_train(src):
-            if record.example_id in seen:
+            if record.dataset_id is None:
+                raise ValueError(f"{src} record {record.example_id} did not hydrate dataset_id")
+            if record.dataset_id in seen:
                 _log.warning(
-                    "duplicate example_id=%s origin=%s (from %s) — skipped",
-                    record.example_id, record.origin, src,
+                    "duplicate dataset_id=%s source_id=%s origin=%s (from %s) — skipped",
+                    record.dataset_id, record.example_id, record.origin, src,
                 )
             else:
-                seen[record.example_id] = record
+                seen[record.dataset_id] = record
 
     merged = list(seen.values())
     with output_path.open("w") as f:
@@ -123,28 +122,3 @@ def append_dataset_row(path: str | Path, row: DatasetRow) -> None:
     validated = DatasetRow.model_validate(row.model_dump())
     with path.open("a") as f:
         f.write(validated.model_dump_json() + "\n")
-
-
-# ---------------------------------------------------------------------------
-# Skipped examples
-# ---------------------------------------------------------------------------
-
-def append_skipped(
-    path: str | Path,
-    example_id: str,
-    reason: str,
-) -> None:
-    """Append a skipped-example entry to skipped.jsonl.
-
-    Written when the pre-flight eager-vs-Inductor sanity check fails.
-    These examples never enter the dataset.
-    """
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    entry = {
-        "example_id": example_id,
-        "reason": reason,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    with path.open("a") as f:
-        f.write(json.dumps(entry) + "\n")

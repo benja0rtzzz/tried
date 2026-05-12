@@ -96,7 +96,16 @@ def _make_inputs(
     return tensors
 
 
-def _load_wrapper(code: str) -> types.FunctionType:
+def _is_triton_jit_function(value: Any) -> bool:
+    cls = type(value)
+    return cls.__name__ == "JITFunction" and cls.__module__.startswith("triton")
+
+
+def _load_wrapper(
+    code: str,
+    *,
+    require_triton_kernel: bool = False,
+) -> types.FunctionType:
     """Write code to a temp .py file, import it, and return the wrapper function.
 
     For Triton code the @triton.jit kernel becomes a JITFunction (not
@@ -128,6 +137,10 @@ def _load_wrapper(code: str) -> types.FunctionType:
     fns = [v for v in vars(module).values() if isinstance(v, types.FunctionType)]
     if not fns:
         raise ValueError("No callable wrapper function found in code")
+    if require_triton_kernel and not any(
+        _is_triton_jit_function(v) for v in vars(module).values()
+    ):
+        raise ValueError("No @triton.jit kernel found in code")
     return fns[-1]
 
 
@@ -254,9 +267,12 @@ def _time_fn(fn: types.FunctionType, inputs: list[torch.Tensor]) -> tuple[float,
 
 
 def compile_check(triton_code: str) -> CompileResponse:
-    """Load the Triton code from a temp file and verify a wrapper function exists."""
+    """Load Triton code and verify both a JIT kernel and wrapper exist."""
     try:
-        wrapper = _load_wrapper(triton_code)  # noqa: F841 — existence check only
+        wrapper = _load_wrapper(  # noqa: F841 — existence check only
+            triton_code,
+            require_triton_kernel=True,
+        )
         return CompileResponse(status=CompileStatus.SUCCESS)
     except ValueError as e:
         return CompileResponse(
@@ -344,7 +360,7 @@ def run_verification(
     """Run Triton candidate against eager and Inductor, returning all 10 stats."""
     try:
         torch_fn = _load_wrapper(pytorch_code)
-        triton_fn = _load_wrapper(triton_code)
+        triton_fn = _load_wrapper(triton_code, require_triton_kernel=True)
         tol = get_tolerance(tolerance_policy)
         inputs = _make_inputs(input_shapes, input_dtypes, rng_seed)
 
@@ -371,7 +387,6 @@ def run_verification(
     except Exception as e:
         _log.error("run failed: %s: %s", type(e).__name__, e)
         return RunResponse(
-            correctness_status=CorrectnessStatus.FAILED,
             error_message=f"{type(e).__name__}: {e}",
         )
 
@@ -389,7 +404,7 @@ def run_benchmark(
     the warmup so compilation latency doesn't inflate timed results.
     """
     torch_fn = _load_wrapper(pytorch_code)
-    triton_fn = _load_wrapper(triton_code)
+    triton_fn = _load_wrapper(triton_code, require_triton_kernel=True)
     inputs = _make_inputs(input_shapes, input_dtypes, rng_seed)
     inductor_fn = torch.compile(torch_fn, backend="inductor")
 

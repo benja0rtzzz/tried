@@ -11,6 +11,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from shared.enums import Dtype, OpCategory, TolerancePolicy
 from shared.logging import get_logger
 from shared.models import PreflightSafeRecord
 
@@ -129,11 +130,32 @@ def _process_one(spec: SkeletonSpec, dedup: EvalDedup) -> tuple[str, WithCodeRow
             input_shapes=response.input_shapes,
             input_dtypes=response.input_dtypes,
             rng_seed=spec.rng_seed,
+            tolerance_policy=_tolerance_policy_for(
+                spec.op_category,
+                response.input_dtypes,
+            ),
         )
     except ValidationError as exc:
         return "rejected", RejectedRow(spec.spec_id, "candidate_schema", str(exc))
 
     return "success", WithCodeRow(spec.spec_id, spec, candidate, response.rationale)
+
+
+def _tolerance_policy_for(
+    op_category: OpCategory,
+    input_dtypes: list[Dtype],
+) -> TolerancePolicy:
+    if all(dtype in {Dtype.INT8, Dtype.INT16, Dtype.INT32, Dtype.INT64, Dtype.BOOL} for dtype in input_dtypes):
+        return TolerancePolicy.EXACT_INTEGER
+    if any(dtype in {Dtype.FLOAT16, Dtype.BFLOAT16} for dtype in input_dtypes):
+        if op_category == OpCategory.REDUCTION:
+            return TolerancePolicy.REDUCTION_FP16
+        if op_category == OpCategory.FUSED_ATTENTION:
+            return TolerancePolicy.ATTENTION_SOFTMAX_FP16
+        return TolerancePolicy.DEFAULT_FP16
+    if op_category == OpCategory.REDUCTION:
+        return TolerancePolicy.REDUCTION_FP32
+    return TolerancePolicy.DEFAULT_FP32
 
 
 def _record_result(result: tuple[str, WithCodeRow | RejectedRow | str], out_path: Path, rejected_path: Path) -> tuple[bool, int, int]:

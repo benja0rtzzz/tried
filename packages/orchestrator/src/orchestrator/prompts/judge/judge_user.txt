@@ -2,4 +2,4 @@ PyTorch reference:
 {pytorch_code}
 
 {attempts_section}
-Classify the current attempt and suggest a fix if needed.
+Classify the current attempt, identify the root cause and repair action if it failed, and suggest a fix if needed.

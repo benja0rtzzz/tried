@@ -111,7 +111,6 @@ def run_eval_job(
         except httpx.TimeoutException:
             _log.warning("/run timed out  example_id=%s", record.example_id)
             run_resp = RunResponse(
-                correctness_status=CorrectnessStatus.FAILED,
                 error_message="ReadTimeout: /run did not respond within the client timeout",
             )
         run_ms = int((time.monotonic() - t0) * 1000)
@@ -163,9 +162,10 @@ def _derive_outcome(
     benchmark_resp: BenchmarkResponse | None,
     attempt_n: int,
 ) -> tuple[EvalFinalOutcome, int | None]:
-    eff_status, _ = _effective_compile(compile_resp, run_resp)
-    if eff_status == CompileStatus.FAILED:
+    if compile_resp.status == CompileStatus.FAILED:
         return EvalFinalOutcome.ALL_ATTEMPTS_FAILED, None
+    if _run_error(run_resp) is not None:
+        return EvalFinalOutcome.RUNTIME_FAIL, None
     if run_resp is None or run_resp.correctness_status != CorrectnessStatus.PASSED:
         return EvalFinalOutcome.CORRECTNESS_FAILED, None
     if benchmark_resp is None:
@@ -176,15 +176,6 @@ def _derive_outcome(
     if speedup >= 1.0:
         return EvalFinalOutcome.COMPILED_CORRECT_PARITY, attempt_n
     return EvalFinalOutcome.COMPILED_CORRECT_SLOW, attempt_n
-
-
-def _effective_compile(
-    compile_resp: CompileResponse,
-    run_resp: RunResponse | None,
-) -> tuple[CompileStatus, str | None]:
-    if run_resp is not None and run_resp.vs_eager is None and run_resp.error_message is not None:
-        return CompileStatus.FAILED, run_resp.error_message
-    return compile_resp.status, compile_resp.error_message
 
 
 def _build_eval_attempt(
@@ -198,7 +189,7 @@ def _build_eval_attempt(
     timestamp: datetime,
     tolerance_policy,
 ) -> EvalAttempt:
-    eff_compile_status, eff_compile_error = _effective_compile(compile_resp, run_resp)
+    run_error = _run_error(run_resp)
 
     correctness: CorrectnessCheck | None = None
     if (
@@ -234,7 +225,11 @@ def _build_eval_attempt(
         attempt_n=0,
         prior_advice_applied=None,
         triton_code=gen.triton_code,
-        compile=CompileResult(status=eff_compile_status, error=eff_compile_error),
+        compile=CompileResult(
+            status=compile_resp.status,
+            error=compile_resp.error_message,
+        ),
+        run_error=run_error,
         correctness=correctness,
         benchmark=benchmark,
         latency=EvalLatency(
@@ -247,4 +242,15 @@ def _build_eval_attempt(
             generator_completion=gen.completion_tokens,
         ),
         timestamp=timestamp,
+    )
+
+
+def _run_error(run_resp: RunResponse | None) -> str | None:
+    if run_resp is None:
+        return None
+    if run_resp.vs_eager is not None and run_resp.vs_inductor is not None:
+        return None
+    return (
+        run_resp.error_message
+        or "Runtime verification failed before producing correctness stats"
     )

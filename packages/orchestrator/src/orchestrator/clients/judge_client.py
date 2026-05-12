@@ -20,8 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
-from shared.enums import JudgeClassification
+from pydantic import BaseModel, model_validator
+from shared.enums import JudgeClassification, JudgeRepairAction, JudgeRootCause
 
 from orchestrator.prompts.judge import SYSTEM, AttemptContext, build_user_prompt
 
@@ -37,12 +37,39 @@ class RateLimitError(Exception):
 
 class _JudgeResponse(BaseModel):
     classification: JudgeClassification
+    root_cause: JudgeRootCause | None
+    repair_action: JudgeRepairAction | None
     fix_suggestion: str | None
+
+    @model_validator(mode="after")
+    def _labels_match_outcome(self) -> _JudgeResponse:
+        if self.classification == JudgeClassification.COMPILED_CORRECT:
+            if (
+                self.root_cause is not None
+                or self.repair_action is not None
+                or self.fix_suggestion is not None
+            ):
+                raise ValueError(
+                    "compiled_correct judge responses must not include repair labels"
+                )
+            return self
+        if (
+            self.root_cause is None
+            or self.repair_action is None
+            or self.fix_suggestion is None
+        ):
+            raise ValueError(
+                "failed judge responses require root_cause, repair_action, "
+                "and fix_suggestion"
+            )
+        return self
 
 
 @dataclass
 class JudgeResult:
     classification: JudgeClassification
+    root_cause: JudgeRootCause | None
+    repair_action: JudgeRepairAction | None
     fix_suggestion: str | None
     prompt_tokens: int
     completion_tokens: int
@@ -169,6 +196,8 @@ def judge(
 
     return JudgeResult(
         classification=parsed.classification,
+        root_cause=parsed.root_cause,
+        repair_action=parsed.repair_action,
         fix_suggestion=parsed.fix_suggestion,
         prompt_tokens=in_tokens,
         completion_tokens=out_tokens,

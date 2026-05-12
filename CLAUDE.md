@@ -41,7 +41,7 @@ tried/
 - **Every attempt goes in the dataset.** Including failures. Never delete failed attempts — they are material for DPO and error-pattern retrieval.
 - **Closed vocabularies are enforced in code.** `judge_classification`, `final_outcome`, `op_category`, `tolerance_policy_used` — all Python Enums, validated before write. Never invent a new value; add to the Enum first and discuss with the team.
 - **Tolerance policy lives in one place.** `packages/shared/src/shared/verification/tolerance.py` is the single source of truth. Don't hardcode `atol`/`rtol` anywhere else. Record the policy key used with every correctness check.
-- **Record all 10 correctness numbers** (5 stats × eager and Inductor): `max_abs_diff`, `max_rel_diff`, `mean_abs_diff`, `n_elements_exceeding_tol`, `pct_elements_exceeding_tol`.
+- **Eval records keep the detailed correctness numbers.** Training dataset rows only store the compact correctness outcome (`status` + `tolerance_policy_used`); eval records store all 10 stats (5 stats × eager and Inductor): `max_abs_diff`, `max_rel_diff`, `mean_abs_diff`, `n_elements_exceeding_tol`, `pct_elements_exceeding_tol`.
 - **Benchmarks are always relative.** Report speedup vs eager and vs Inductor. Absolute ms is not the primary metric.
 - **The prompt is fixed.** It lives in `packages/orchestrator/src/orchestrator/prompts/`. Do not change it once the experiment begins. A different prompt is a different experiment.
 - **No examples in the prompt.** Including Triton kernel examples in the prompt template would bias the generator and compromise the baseline. The model must stand on its own.
@@ -51,8 +51,8 @@ tried/
 
 These files encode experimental invariants. Editing them mid-experiment invalidates comparisons between runs. They are set once, before data collection, in agreement with the full team.
 
-- `docs/schema.md`, `packages/shared/src/shared/schema/dataset/dataset_record.json`, and `packages/shared/src/shared/schema/dataset/eval_and_training.json` — dataset and corpus schemas
-- `packages/shared/src/shared/schema/eval/spec.json`, `packages/shared/src/shared/schema/eval/corpus_record.json`, and `packages/shared/src/shared/schema/eval/record.json` — eval schemas
+- `docs/schema.md`, `packages/shared/src/shared/schema/dataset/preflight_safe_record.json`, and `packages/shared/src/shared/schema/dataset/dataset_record.json` — training input/output schemas
+- `packages/shared/src/shared/schema/eval/eval_spec.json`, `packages/shared/src/shared/schema/eval/eval_corpus_record.json`, and `packages/shared/src/shared/schema/eval/eval_result.json` — held-out eval schemas
 - `docs/tolerance-policy.md` and `packages/shared/src/shared/verification/tolerance.py`
 - `eval/holdout/` — the evaluation set (never touch programmatically)
 

@@ -8,7 +8,7 @@
     "preflight_request": {
       "type": "object",
       "additionalProperties": false,
-      "description": "One-time check per job sent before the agent loop starts. The server runs PyTorch eager and torch.compile+Inductor on the same inputs and verifies they agree within the requested tolerance. If they do not, the example is written to skipped.jsonl and the agent loop never starts.",
+      "description": "One-time check sent before dataset or eval generation accepts a row. The server runs PyTorch eager and torch.compile+Inductor on the same inputs and verifies they agree within the requested tolerance. If they do not, the caller records the row in its preflight rejection output and the downstream agent/eval loop never starts for that row.",
       "required": ["pytorch_code", "input_shapes", "input_dtypes", "rng_seed", "tolerance_policy"],
       "properties": {
         "pytorch_code":     { "type": "string", "description": "Standalone PyTorch function to evaluate. Must be executable with import torch only." },
@@ -63,7 +63,7 @@
     "compile_response": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Result of attempting to compile the Triton kernel. On success the kernel is in the Triton JIT cache keyed by source hash; subsequent /run or /benchmark calls with the same triton_code will hit the cache.",
+      "description": "Result of static Triton candidate validation: the code imports, defines a @triton.jit kernel, and exposes a callable wrapper. This is not shape-aware launch compilation; launch-time Triton JIT failures are reported by /run.",
       "required": ["status", "error_message"],
       "properties": {
         "status":        { "$ref": "#/$defs/compile_status" },
@@ -80,7 +80,7 @@
       "description": "Run the compiled kernel and compare its output against PyTorch eager and torch.compile+Inductor. The server reconstructs input tensors from shapes, dtypes, and rng_seed — tensors are never sent over the wire.",
       "required": ["triton_code", "pytorch_code", "input_shapes", "input_dtypes", "rng_seed", "tolerance_policy"],
       "properties": {
-        "triton_code":      { "type": "string", "description": "Same kernel source sent to /compile. Triton JIT cache will be a hit if /compile was called first with identical code." },
+        "triton_code":      { "type": "string", "description": "Same candidate source sent to /compile. /run performs shape-aware launch compilation and numeric verification." },
         "pytorch_code":     { "type": "string", "description": "PyTorch reference function used to generate the eager and Inductor outputs for comparison." },
         "input_shapes":     { "$ref": "#/$defs/input_shapes" },
         "input_dtypes":     { "$ref": "#/$defs/input_dtypes" },
@@ -124,7 +124,7 @@
       "description": "Time a correctness-passing kernel against eager and Inductor baselines. Caller must have confirmed correctness_status == 'passed' from /run before calling this endpoint. Returns a job_accepted immediately (HTTP 202); poll GET /jobs/{job_id} for the result. Protocol: 10 warmup runs (not timed), 100 timed runs, median reported, CUDA events used, synchronized start and end.",
       "required": ["triton_code", "pytorch_code", "input_shapes", "input_dtypes", "rng_seed"],
       "properties": {
-        "triton_code":  { "type": "string", "description": "Same kernel source used in /compile and /run. Triton JIT cache will be a hit." },
+        "triton_code":  { "type": "string", "description": "Same candidate source used in /compile and /run." },
         "pytorch_code": { "type": "string", "description": "PyTorch reference function. Used to time eager and Inductor baselines." },
         "input_shapes": { "$ref": "#/$defs/input_shapes" },
         "input_dtypes": { "$ref": "#/$defs/input_dtypes" },

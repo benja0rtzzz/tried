@@ -21,12 +21,13 @@ import triton
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from shared.enums import CorrectnessStatus
+from shared.enums import CompileStatus
 from shared.logging import get_logger
 from shared.verification.api import (
     BenchmarkRequest,
     BenchmarkResponse,
     CompileRequest,
+    CompileResponse,
     JobAccepted,
     JobStatus,
     JobStatusValue,
@@ -55,6 +56,7 @@ if not _API_KEY:
 # Must be LESS than the orchestrator's _INDUCTOR_TIMEOUT (300 s) so the server kills
 # a stuck subprocess and returns an error response before the HTTP connection drops.
 _WORKER_TIMEOUT = 240.0
+_COMPILE_WORKER_TIMEOUT = 25.0
 
 
 class _HealthResponse(BaseModel):
@@ -98,7 +100,7 @@ def _kill_worker() -> None:
             _worker = None
 
 
-def _isolated(fn, **kwargs):
+def _isolated(fn, *, worker_timeout: float = _WORKER_TIMEOUT, **kwargs):
     """Call fn(**kwargs) in the persistent worker subprocess.
 
     The worker is ALWAYS terminated after each call (in the finally block) so every
@@ -112,10 +114,10 @@ def _isolated(fn, **kwargs):
     No retry on ProcessError — the kernel is suspect, and the next call gets a fresh worker.
     """
     try:
-        return _get_worker().apply_async(fn, kwds=kwargs).get(timeout=_WORKER_TIMEOUT)
+        return _get_worker().apply_async(fn, kwds=kwargs).get(timeout=worker_timeout)
     except mp.TimeoutError:
-        _log.error("worker timed out after %.0fs", _WORKER_TIMEOUT)
-        raise TimeoutError(f"GPU task timed out after {_WORKER_TIMEOUT:.0f}s")
+        _log.error("worker timed out after %.0fs", worker_timeout)
+        raise TimeoutError(f"GPU task timed out after {worker_timeout:.0f}s")
     except mp.ProcessError as exc:
         _log.warning("worker process died unexpectedly: %s", exc)
         raise RuntimeError(f"worker process died: {exc}") from exc
@@ -178,7 +180,17 @@ def preflight_endpoint(req: PreflightRequest):
 @app.post("/compile")
 def compile_endpoint(req: CompileRequest):
     _log.info("compile")
-    return compile_check(req.triton_code)
+    try:
+        return _isolated(
+            compile_check,
+            worker_timeout=_COMPILE_WORKER_TIMEOUT,
+            triton_code=req.triton_code,
+        )
+    except (TimeoutError, RuntimeError) as e:
+        return CompileResponse(
+            status=CompileStatus.FAILED,
+            error_message=str(e),
+        )
 
 
 @app.post("/run")
@@ -200,7 +212,6 @@ def run_endpoint(req: RunRequest):
         )
     except (TimeoutError, RuntimeError) as e:
         return RunResponse(
-            correctness_status=CorrectnessStatus.FAILED,
             error_message=str(e),
         )
 

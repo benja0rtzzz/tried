@@ -2,7 +2,7 @@
 
 Covers single-label descriptive eval analyses that don't need scipy: outcome
 distribution, Wilson CIs on per-tier pass rate, timing IQR from raw samples,
-speedup summaries, and Triton compile-time descriptives. Paired tests are
+speedup summaries, and Triton static-validation latency descriptives. Paired tests are
 scaffolded in hypothesis.py for the second eval run.
 """
 
@@ -148,16 +148,15 @@ def timing_iqr(rows: list[EvalRecord]) -> dict:
 
 
 def triton_compile_stats(rows: list[EvalRecord]) -> dict:
-    """Descriptive stats on Triton compile_ms (winning attempts only).
+    """Descriptive stats on /compile latency (winning attempts only).
 
-    This is the genuinely-cold compile time recorded per attempt by the
-    verification server's /compile endpoint. Replaces the dropped
-    baseline_compile.{eager,inductor}_first_call_ms — those were polluted by
-    a shared in-process Inductor cache and didn't measure cold compile."""
+    The current /compile endpoint performs static candidate validation: import,
+    @triton.jit kernel detection, and wrapper detection. Shape-aware Triton
+    launch compilation happens later in /run, so this is not compile-time
+    evidence for model comparison."""
     winners = _winning(rows)
     triton_compile_ms = [
         float(r.attempts[r.final_winning_attempt_n].latency.compile_ms)  # type: ignore[union-attr]
         for r in winners
     ]
     return {"triton_compile_ms": _describe(triton_compile_ms)}
-

@@ -4,6 +4,26 @@ Lightweight record of non-obvious decisions. Full reasoning lives in the Claude 
 All entrees here are accepted.
 ---
 
+## 2026-05-12 — Dataset loop shortened to 3 attempts and shuffled input order
+
+The first live dataset rows showed a ~4 minute per-row cadence because every row used five attempts and every attempt called the judge, including the terminal attempt whose advice could not be consumed. The active `preflight_safe.jsonl` was also grouped by category, with a long matmul prefix, which made early progress unrepresentative and would spend days on one family before sampling the rest.
+
+The dataset loop now uses `MAX_ATTEMPTS=3`. Every failed attempt calls the judge so terminal failures still receive `judge_classification`, `judge_root_cause`, `judge_repair_action`, and `judge_fix_suggestion`; passing attempts skip the judge and record those fields as null. Non-terminal failed-attempt advice is fed into the next generation. The active preflight-safe input was deterministically shuffled with seed `20260512`; the original ordered file is preserved as `data/preflight_safe.ordered-20260512-before-shuffle.jsonl`, with a manifest at `data/preflight_safe.shuffle-20260512.json`.
+
+Implementation: `orchestrator/dataset/agent.py`, `shared/models.py`, `schema/dataset/dataset_record.json`, `stats/dataset/summary.py`, `docs/architecture.md`, `docs/schema.md`, and the shuffled `data/preflight_safe.jsonl`.
+
+---
+
+## 2026-05-12 — `/compile` is static Triton validation, not shape-aware compile timing
+
+Repo review before the full dataset run found that `/compile` loads/imports candidate code and checks wrapper shape, but it does not receive input shapes and therefore cannot perform shape-aware Triton launch compilation. Treating `EvalAttempt.latency.compile_ms` as "Triton compile time" would make the planned paired t-test measure the wrong thing.
+
+The verification harness now requires candidate code to define a `@triton.jit` kernel before `/compile`, `/run`, or `/benchmark` accepts it, so pure-PyTorch fallbacks cannot pass as Triton. Runtime errors from `/run` now return `correctness_status=null` with `error_message`, keeping launch-time JIT failures and CUDA crashes separate from clean numeric failures. The eval stats plan keeps McNemar and Wilcoxon as the headline paired tests; the paired t-test target is TBD unless `/compile` becomes shape-aware.
+
+Implementation: `verification/harness.py` (`require_triton_kernel` gate), `verification/server.py` and both orchestrator agents (runtime errors no longer masquerade as numeric `failed`), `schema/verification_api.json`, `schema/eval/eval_result.json`, `docs/architecture.md`, `docs/eval-stats.md`, and stats eval comments/report labels.
+
+---
+
 ## 2026-05-09 — Orchestrator split: dataset pipeline moved into its own subpackage alongside new eval pipelines
 
 The orchestrator originally housed a single pipeline — the dataset-generation agent loop — at `orchestrator/main.py` and `orchestrator/agent.py`. The eval workflow has since grown into two distinct pipelines (`eval_gen/` for synthetic-fusion corpus generation, `eval_run/` for the single-attempt eval runner against the locked holdout), each with its own entry point and helpers. Leaving the dataset pipeline at the package root made the layout asymmetric and obscured that there are now three peer pipelines, not one pipeline plus eval extras.
@@ -20,9 +40,9 @@ Descriptive stats on the cleaned vanilla run revealed that `baseline_compile.ind
 
 Forcing a real cold compile per row (clearing `torch._inductor` caches between rows) would add 7–14 hours of pure compile to each run, and the metric is secondary — the project's headline claim is `speedup_vs_inductor`, not "Triton compiles faster than Inductor". The course Week 3 rubric requires *a* paired t-test on project data; nothing requires it to be on cold-compile time. So `baseline_compile` is removed entirely from `EvalRecord`, the schema, and the orchestrator writer; the verification preflight API still returns `eager_first_call_ms` / `inductor_first_call_ms` because the corpus generator (`preflight_driver.py`) embeds them in `EvalCorpusRecord.preflight_*_ms`, where each spec is preflight-checked in isolation at sampling time and the cache argument doesn't apply the same way.
 
-The Week 3 paired t-test is re-targeted to `log(attempts[winning].latency.compile_ms)` — Triton compile time, recorded per attempt by the verification server's `/compile` endpoint. Each call is a fresh `triton.JITFunction` compilation (no cross-row cache), so the values measure real compile cost. Vanilla median is 51 ms, IQR 48–57 ms, max 169 ms — clean distribution, log-transformed will be approximately normal and suitable for a paired t-test against the fine-tuned run. Wilcoxon on log-speedup and McNemar on pass rate are unaffected.
+Superseded on 2026-05-12: `attempts[winning].latency.compile_ms` is static `/compile` validation latency, not shape-aware Triton launch compilation. It should not be used as "Triton compile time" for the paired t-test target unless the endpoint contract changes.
 
-Implementation: removed `BaselineCompile` from `shared/models.py`; removed `baseline_compile` from `EvalRecord` and `schema/eval/record.json`; stripped `baseline_compile` from existing `eval/results/qwen2.5-coder:14b-vanilla/eval_rows.jsonl`; simplified `eval_run/agent.py` (no longer builds `BaselineCompile` and no longer rejects preflights with null first-call timings, since `passed=True` is sufficient); replaced `descriptive.baseline_compile_stats` with `descriptive.triton_compile_stats` and re-wired the report; renamed `hypothesis.paired_t_log_compile` to `paired_t_log_triton_compile`; updated `docs/eval-stats.md` (course-week table, Group A/B tables, Week 4 sample-size).
+Implementation: removed `BaselineCompile` from `shared/models.py`; removed `baseline_compile` from `EvalRecord` and `schema/eval/eval_result.json`; stripped `baseline_compile` from existing `eval/results/qwen2.5-coder:14b-vanilla/eval_rows.jsonl`; simplified `eval_run/agent.py` (no longer builds `BaselineCompile` and no longer rejects preflights with null first-call timings, since `passed=True` is sufficient); replaced `descriptive.baseline_compile_stats` with `descriptive.triton_compile_stats` and re-wired the report; renamed `hypothesis.paired_t_log_compile` to `paired_t_log_triton_compile`; updated `docs/eval-stats.md` (course-week table, Group A/B tables, Week 4 sample-size).
 
 ---
 
@@ -30,9 +50,9 @@ Implementation: removed `BaselineCompile` from `shared/models.py`; removed `base
 
 The vanilla qwen eval finished and surfaced two issues. First, `eval/holdout/synthetic_fusions.jsonl` carried 4 duplicate `example_id`s from the spec sampler (443 lines, 439 unique), and the harness faithfully ran the duplicates twice — `eval_rows.jsonl` ended at 441 lines / 437 unique with 2 specs that never produced an `EvalRecord`. Second, `model_label` was an in-record field on every `EvalRecord` even though every row in a given file shares the same value; the parent directory `eval/results/<label>/` already identifies the condition, so the field was pure redundancy.
 
-Both files were rewritten to the same 437 unique `example_id`s — duplicate occurrences dropped first-seen-wins, and the 2 specs missing from results were dropped from holdout to keep the fine-tuned eval aligned with vanilla. The held-out eval is in the locked set; this edit was authorized by the user as a one-shot cleanup before the second run, with no agent-loop or scoring change. `model_label` was removed from `schema/eval/record.json` (now 7 required fields), `EvalRecord` in `shared/models.py`, and the orchestrator writer; the orchestrator CLI still takes `--model-label` to determine the output folder. The tier counts moved from the original plan's 105 / 115 / 80 to the empirical 103 / 217 / 117 — `docs/corpus.md` and `docs/eval-stats.md` updated to match. Sample-size analysis at n=437 is at least as powerful as the original n=300 plan.
+Both files were rewritten to the same 437 unique `example_id`s — duplicate occurrences dropped first-seen-wins, and the 2 specs missing from results were dropped from holdout to keep the fine-tuned eval aligned with vanilla. The held-out eval is in the locked set; this edit was authorized by the user as a one-shot cleanup before the second run, with no agent-loop or scoring change. `model_label` was removed from `schema/eval/eval_result.json` (now 7 required fields), `EvalRecord` in `shared/models.py`, and the orchestrator writer; the orchestrator CLI still takes `--model-label` to determine the output folder. The tier counts moved from the original plan's 105 / 115 / 80 to the empirical 103 / 217 / 117 — `docs/corpus.md` and `docs/eval-stats.md` updated to match. Sample-size analysis at n=437 is at least as powerful as the original n=300 plan.
 
-Implementation: `eval/holdout/synthetic_fusions.jsonl`, `eval/results/qwen2.5-coder:14b-vanilla/eval_rows.jsonl`, `packages/shared/src/shared/schema/eval/record.json`, `packages/shared/src/shared/models.py` (`EvalRecord`), `packages/orchestrator/src/orchestrator/eval_run/agent.py`, `docs/corpus.md`, `docs/eval-stats.md`.
+Implementation: `eval/holdout/synthetic_fusions.jsonl`, `eval/results/qwen2.5-coder:14b-vanilla/eval_rows.jsonl`, `packages/shared/src/shared/schema/eval/eval_result.json`, `packages/shared/src/shared/models.py` (`EvalRecord`), `packages/orchestrator/src/orchestrator/eval_run/agent.py`, `docs/corpus.md`, `docs/eval-stats.md`.
 
 ---
 
@@ -65,7 +85,7 @@ Row = one PyTorch op, all attempts, final outcome. Key fields: `source` (immutab
 ---
 
 ## 2026-04-24 — Sanity check moved to pre-flight, removed from schema
-Eager-vs-Inductor agreement check runs before the agent loop starts. Examples that fail are written to `skipped.jsonl` and never enter the dataset. Removed `sanity_check` block and `harness_broken` outcome — every row in the dataset is guaranteed clean.
+Eager-vs-Inductor agreement check runs before the agent loop starts. Examples that fail are written to the preflight rejection output and never enter the dataset. Removed `sanity_check` block and `harness_broken` outcome — every row in the dataset is guaranteed clean.
 
 ---
 
@@ -138,8 +158,8 @@ Added `triton_std_ms`, `eager_std_ms`, `inductor_std_ms` to the `benchmark` bloc
 Three files added to `packages/shared/src/shared/`:
 
 - `enums.py` — all closed-vocabulary Python enums (`OpCategory`, `Dtype`, `Split`, `Difficulty`, `FinalOutcome`, `JudgeClassification`, `CompileStatus`, `CorrectnessStatus`). Re-exports `TolerancePolicy` from `tolerance.py` as a single import point.
-- `models.py` — Pydantic v2 models for `CorpusRecord` (eval_and_training.json shape) and `DatasetRow` (dataset_record.json shape), plus all sub-models. Cross-field invariants are enforced at validation time: shapes/dtypes length match, eval requires non-null difficulty, compile error null iff success, correctness null on compile failure, benchmark null on correctness failure, sequential attempt indices, winning attempt null iff outcome is a failure terminal.
-- `dataset/__init__.py` — five I/O functions: `load_corpus_train`, `merge_corpus`, `load_dataset`, `append_dataset_row`, `append_skipped`. `merge_corpus` deduplicates by `example_id` (first-seen wins) and reports skipped duplicates to stdout.
+- `models.py` — Pydantic v2 models for training corpus rows, preflight-safe Step 5 rows, dataset output rows, and eval-only records. Current machine schemas are split: `schema/dataset/preflight_safe_record.json`, `schema/dataset/dataset_record.json`, and `schema/eval/{eval_spec,eval_corpus_record,eval_result}.json`. Cross-field invariants are enforced at validation time: shapes/dtypes length match, train rows require `difficulty=null`, eval rows use eval-only models, compile error null iff success, correctness null on compile failure, benchmark null on correctness failure, and attempt indices are sequential.
+- `dataset/__init__.py` — dataset I/O functions: `load_corpus_train`, `merge_corpus`, `load_dataset`, `append_dataset_row`. `merge_corpus` now deduplicates by derived `dataset_id` (first-seen wins) and reports skipped duplicates to stdout.
 
 v1 (80 rows) and v2 (110 rows) scraper outputs merged to `data/corpus_train.jsonl` (190 rows, zero duplicates). Duplicate `origin` strings within v1 are intentional — they represent distinct sub-graphs with different `input_shapes` and carry unique `example_id`s.
 
@@ -163,7 +183,7 @@ All packages operational. Key decisions made during bring-up:
 
 **Problem:** Gemini 2.5 Flash free tier resets daily. If the quota is exhausted mid-run, the process should stop cleanly rather than crash, and restart should continue from where it left off without re-processing any example.
 
-**Resume logic (`main.py`):** On startup, `dataset.jsonl` and `skipped.jsonl` are read to collect all already-processed `example_id`s. The corpus list is filtered to exclude them before the loop starts. Log line reports how many are skipped. Cost: one extra file read at startup — negligible.
+**Resume logic (`main.py`):** On startup, `data/dataset/dataset.jsonl` is read to collect all already-processed `dataset_id`s. The corpus list is filtered to exclude those exact dataset tasks before the loop starts. Transport and validation errors are written to `data/dataset/errors.jsonl` but are not treated as completed rows, so restart retries them. Log line reports how many are skipped. Cost: one extra file read at startup — negligible.
 
 **Rate-limit detection (`judge_client.py`):** A `RateLimitError` exception is raised when the Gemini response signals quota exhaustion (HTTP 429, or message containing "quota"/"rate limit"). It propagates through `agent.py` (no catch there) to `main.py`, where it is caught before the generic transport-error handler. On `RateLimitError`, the run logs progress and exits cleanly with code 0. The next restart picks up from the resume filter.
 
@@ -180,4 +200,3 @@ All packages operational. Key decisions made during bring-up:
 - JSON schema (`dataset_record.json`) updated to match.
 
 The Gemini structured-output response schema is derived from the Pydantic model at call time, so the client needed no changes.
-

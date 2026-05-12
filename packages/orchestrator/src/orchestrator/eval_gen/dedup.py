@@ -18,7 +18,8 @@ import ast
 import hashlib
 from pathlib import Path
 
-from shared.dataset import load_corpus_train
+from pydantic import ValidationError
+from shared.models import CorpusRecord, PreflightSafeRecord
 
 
 # Names that should NOT be renamed during canonicalization. Module names,
@@ -81,17 +82,42 @@ def canonical_hash(pytorch_code: str) -> str:
 # Training-corpus hash cache
 # ---------------------------------------------------------------------------
 
-_TRAIN_HASH_CACHE: set[str] | None = None
+_TRAIN_HASH_CACHE: dict[Path, set[str]] = {}
 
 
-def load_training_hashes(corpus_path: Path | str = "data/corpus_train.jsonl") -> set[str]:
-    """Compute (and cache) canonical hashes of every training-corpus row's
-    pytorch_code. Cheap per-row; full pass on first call only."""
-    global _TRAIN_HASH_CACHE
-    if _TRAIN_HASH_CACHE is None:
-        rows = load_corpus_train(corpus_path)
-        _TRAIN_HASH_CACHE = {canonical_hash(r.pytorch_code) for r in rows}
-    return _TRAIN_HASH_CACHE
+def _load_training_codes(corpus_path: Path | str) -> list[str]:
+    path = Path(corpus_path)
+    codes: list[str] = []
+    with path.open() as f:
+        for i, raw in enumerate(f, start=1):
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                codes.append(PreflightSafeRecord.model_validate_json(line).pytorch_code)
+                continue
+            except ValidationError:
+                pass
+            try:
+                codes.append(CorpusRecord.model_validate_json(line).pytorch_code)
+            except ValidationError as exc:
+                raise ValueError(f"{path}:{i} — {exc}") from exc
+    return codes
+
+
+def load_training_hashes(corpus_path: Path | str = "data/preflight_safe.jsonl") -> set[str]:
+    """Compute and cache canonical hashes of current training PyTorch rows.
+
+    The current training input is PreflightSafeRecord JSONL. Legacy full
+    CorpusRecord rows are still accepted so older local scratch files can be
+    inspected without a conversion step.
+    """
+    path = Path(corpus_path)
+    if path not in _TRAIN_HASH_CACHE:
+        _TRAIN_HASH_CACHE[path] = {
+            canonical_hash(code) for code in _load_training_codes(path)
+        }
+    return _TRAIN_HASH_CACHE[path]
 
 
 def is_training_dupe(pytorch_code: str, training_hashes: set[str] | None = None) -> bool:
