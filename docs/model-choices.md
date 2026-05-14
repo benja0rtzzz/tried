@@ -8,6 +8,6 @@
 
 **Current choice:** Codex CLI profile `gpt-5-3-codex`.
 
-The judge only classifies outcomes and provides retry advice. It never generates Triton kernels.
+The judge only classifies outcomes and provides retry advice. It never generates Triton kernels. The structured output consumed by the orchestrator is `classification`, `root_cause`, `repair_action`, and `fix_suggestion`.
 
 The judge is invoked through `codex exec` with `--output-schema`, `--output-last-message`, `--json`, `--ephemeral`, and a read-only sandbox. The switch from the direct `o4-mini` client was cost-driven: it keeps the same judge role and structured-output contract while using the local Codex CLI profile already available for the project. The current profile is hardcoded in `packages/orchestrator/src/orchestrator/clients/judge_client.py`.

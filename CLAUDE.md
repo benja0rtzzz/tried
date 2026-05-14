@@ -2,9 +2,9 @@
 
 ## What this project is
 
-An agent that translates PyTorch code to Triton kernels, verifies the output by executing and comparing against PyTorch eager + `torch.compile` Inductor baselines, and records every attempt into a dataset used for RAG retrieval and LoRA fine-tuning. 2-month student project, 3 devs.
+An agent that translates PyTorch code to Triton kernels, verifies the output by executing and comparing against PyTorch eager + `torch.compile` Inductor baselines, and records every attempt into a dataset used for SFT/DPO training and failure analysis. 2-month student project, 3 devs.
 
-The deliverable is a TUI application (VSCode extension as stretch) on top of a translation backend. The full pipeline includes the agent loop, verification harness, RAG retrieval over past attempts, and LoRA fine-tuning. Industry-relevance framing: developer productivity and GPU cost reduction, not "beat torch.compile".
+The long-term deliverable is a TUI application (VSCode extension as stretch) on top of a translation backend. The current repo focuses on the experimental backend: corpus generation, the dataset agent loop, the verification harness, the held-out eval runner, and fine-tuning/eval analysis. Industry-relevance framing: developer productivity and GPU cost reduction, not "beat torch.compile".
 
 **This is a controlled experiment.** Schema, tolerance policy, and prompt are set once before data collection begins and do not change during the experiment. Changing any of them mid-run invalidates comparisons between attempts.
 
@@ -12,12 +12,12 @@ The deliverable is a TUI application (VSCode extension as stretch) on top of a t
 
 Two machines, two roles:
 
-- **M4 MacBook Pro (48GB)** — Orchestrator: runs the agent loop, calls the local LLM via Ollama, HTTP-POSTs to the Lenovo verification server, calls the judge (OpenAI), manages retries, writes the dataset. Fine-tuning via MLX / mlx-lm.
+- **M4 MacBook Pro (48GB)** — Orchestrator: runs corpus generation plus the dataset/eval pipelines, calls the local LLM via Ollama, HTTP-POSTs to the Lenovo verification server, calls the judge through Codex CLI, manages retries, and writes dataset/eval outputs. Fine-tuning via MLX / mlx-lm.
 - **Lenovo LOQ (RTX 4060 8GB)** — Verification server: FastAPI service that accepts Triton + PyTorch code, compiles, executes, benchmarks, and returns structured results. Triton requires CUDA.
 
-Agent loop: PyTorch input → Orchestrator calls local LLM (Ollama) → Orchestrator HTTP-POSTs to Lenovo FastAPI (`/compile`, `/run`, `/benchmark`) → results returned → judge (OpenAI o4-mini) classifies outcome → retry up to N=5 → record every attempt.
+Agent loop: PyTorch input → Orchestrator calls local LLM (Ollama) → Orchestrator HTTP-POSTs to Lenovo FastAPI (`/compile`, `/run`, `/benchmark`) → results returned → judge (Codex CLI profile `gpt-5-3-codex`) classifies outcome → retry up to N=3 → record every attempt.
 
-The generator is a local LLM on the MacBook. The judge is hosted by OpenAI. **The judge never generates kernels, only classifies and advises.** Never conflate these roles.
+The generator is a local LLM on the MacBook. The judge is invoked through the local Codex CLI profile. **The judge never generates kernels, only classifies and advises.** Never conflate these roles.
 
 See @docs/architecture.md for the full data flow and FastAPI contract.
 
@@ -28,21 +28,22 @@ tried/
   pyproject.toml              ← UV workspace root
   packages/
     shared/                   ← schema, enums, tolerance policy, dataset I/O (both machines)
-    orchestrator/             ← agent loop, LLM calls, judge, prompts, RAG, fine-tuning (MacBook only)
+    orchestrator/             ← corpus generation, dataset/eval pipelines, judge/generator clients, prompts, fine-tuning hooks (MacBook only)
     verification/             ← FastAPI server, compile harness, benchmark rig (Lenovo only)
   eval/holdout/               ← LOCKED. Never modified programmatically.
-  data/                       ← gitignored except small samples
+  data/                       ← experiment inputs/outputs; `data/corpus_gen/` scratch is ignored
   docs/                       ← knowledge base (see below)
 ```
 
 ## Non-negotiable rules
 
-- **The held-out evaluation set is sacred.** `eval/holdout/` must NEVER enter training, RAG retrieval, or prompt examples. If unsure whether an example belongs here, assume eval and ask.
-- **Every attempt goes in the dataset.** Including failures. Never delete failed attempts — they are material for DPO and error-pattern retrieval.
+- **The held-out evaluation set is sacred.** `eval/holdout/` must NEVER enter training, prompt examples, or any future retrieval corpus. If unsure whether an example belongs here, assume eval and ask.
+- **Every attempt goes in the dataset.** Including failures. Never delete failed attempts — they are material for DPO and error-pattern analysis.
 - **Closed vocabularies are enforced in code.** `judge_classification`, `final_outcome`, `op_category`, `tolerance_policy_used` — all Python Enums, validated before write. Never invent a new value; add to the Enum first and discuss with the team.
 - **Tolerance policy lives in one place.** `packages/shared/src/shared/verification/tolerance.py` is the single source of truth. Don't hardcode `atol`/`rtol` anywhere else. Record the policy key used with every correctness check.
 - **Eval records keep the detailed correctness numbers.** Training dataset rows only store the compact correctness outcome (`status` + `tolerance_policy_used`); eval records store all 10 stats (5 stats × eager and Inductor): `max_abs_diff`, `max_rel_diff`, `mean_abs_diff`, `n_elements_exceeding_tol`, `pct_elements_exceeding_tol`.
 - **Benchmarks are always relative.** Report speedup vs eager and vs Inductor. Absolute ms is not the primary metric.
+- **Training rows resume by `dataset_id`.** The dataset pipeline deduplicates exact tasks by derived `dataset_id`; paired eval comparisons still join by `example_id`.
 - **The prompt is fixed.** It lives in `packages/orchestrator/src/orchestrator/prompts/`. Do not change it once the experiment begins. A different prompt is a different experiment.
 - **No examples in the prompt.** Including Triton kernel examples in the prompt template would bias the generator and compromise the baseline. The model must stand on its own.
 - **Schema is fixed** before data collection begins. Agreed upon by the team, then immutable for the duration of the experiment.
@@ -89,10 +90,10 @@ Week 2 of an 8-week project. Full pipeline operational and ready for data collec
 
 - Schema, tolerance policy, held-out eval set locked.
 - Verification server complete: `/health`, `/preflight`, `/compile`, `/run`, `/benchmark`, `/jobs/{id}`. Smoke-tested on Lenovo (RTX 4060, CUDA + Inductor + CUDA-Event timing confirmed). `VERIFICATION_API_KEY` enforced at startup.
-- Orchestrator complete: agent loop, generator client (Ollama/qwen2.5-coder:14b), judge client (OpenAI o4-mini, `reasoning_effort="high"`), dataset I/O, corpus loading.
+- Orchestrator complete: corpus generation, dataset/eval pipelines, generator client (Ollama/qwen2.5-coder:14b), judge client (Codex CLI profile `gpt-5-3-codex`), dataset I/O, and corpus loading.
 - `packages/tests` (`tried-tests`) holds the end-to-end smoke test (`tried_tests.smoke`).
-- Resume logic in `main.py`: on restart, already-completed and preflight-skipped examples are filtered out so no example is processed twice.
-- OpenAI rate-limit handling: hitting a 429 stops the run cleanly; restart resumes from where it left off once the rate-limit window clears (or credits are topped up).
+- Resume logic in `main.py`: on restart, already-completed `dataset_id`s are filtered out so no exact dataset task is processed twice. Transport/validation errors go to `data/dataset/errors.jsonl` and retry on restart.
+- Codex CLI rate-limit handling: judge quota/rate-limit exits stop the run cleanly; restart resumes from where it left off once the rate-limit window clears.
 
 ## Docs knowledge base
 
@@ -101,8 +102,6 @@ Week 2 of an 8-week project. Full pipeline operational and ready for data collec
 - @docs/benchmarking-protocol.md — verification steps, timing rules, hardware pinning
 - @docs/tolerance-policy.md — tolerance values and rationale
 - @docs/model-choices.md — generator/judge selection rationale, bakeoff results
-- @docs/dev-setup-macbook.md — MacBook environment setup (UV, Ollama, MLX)
-- @docs/dev-setup-lenovo.md — Lenovo environment setup (UV, CUDA, Triton, uvicorn)
 - @docs/decision-log.md — ADR-lite log of key decisions
 - @docs/corpus.md — corpus plan, train/eval split, extraction rules
 - @docs/eval-stats.md — eval analyses, schema-need split, stats package layout

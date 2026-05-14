@@ -24,6 +24,16 @@ Implementation: `verification/harness.py` (`require_triton_kernel` gate), `verif
 
 ---
 
+## 2026-05-10 — Judge moved from direct `o4-mini` API calls to Codex CLI `gpt-5-3-codex`
+
+The direct `o4-mini` judge path was functionally acceptable, but it introduced a separate API integration and credential path for a role that only needs structured classification plus repair advice. The repo already depended on Codex CLI for local workflows, so keeping the judge on a Codex profile reduced operational surface area while preserving the same "judge only classifies and advises" role.
+
+The judge now shells out to `codex exec` with `--output-schema`, `--output-last-message`, `--json`, `--ephemeral`, and a read-only sandbox. The effective judge model identifier is the CLI profile `gpt-5-3-codex`, token accounting is parsed from CLI JSON events, and rate-limit handling now keys off Codex CLI failures instead of raw OpenAI HTTP responses. The structured output contract remains the same at the orchestrator boundary: classification plus targeted repair labels/advice for failed attempts.
+
+Implementation: `packages/orchestrator/src/orchestrator/clients/judge_client.py`, `packages/orchestrator/src/orchestrator/prompts/judge/`, `packages/tests/test_judge.py`, and `docs/model-choices.md`.
+
+---
+
 ## 2026-05-09 — Orchestrator split: dataset pipeline moved into its own subpackage alongside new eval pipelines
 
 The orchestrator originally housed a single pipeline — the dataset-generation agent loop — at `orchestrator/main.py` and `orchestrator/agent.py`. The eval workflow has since grown into two distinct pipelines (`eval_gen/` for synthetic-fusion corpus generation, `eval_run/` for the single-attempt eval runner against the locked holdout), each with its own entry point and helpers. Leaving the dataset pipeline at the package root made the layout asymmetric and obscured that there are now three peer pipelines, not one pipeline plus eval extras.
@@ -69,6 +79,8 @@ Implementation: `prompts/generator/generator_user.txt` (`{prior_advice_section}`
 ## 2026-05-06 — Judge switched from Gemini 2.5 Flash to OpenAI o4-mini
 
 Gemini 2.5 Flash was not producing useful fix suggestions — it classified most Triton JIT failures as `other` or repeated generic advice across retries. Root cause is model capability, not prompt design; expanding the prompt with error examples would paper over a reasoning gap rather than fix it.
+
+Superseded on 2026-05-10: the direct `o4-mini` client was replaced by Codex CLI profile `gpt-5-3-codex`, keeping the same judge role but moving the operational interface to `codex exec`.
 
 o4-mini is a dedicated reasoning model at a comparable price point (~$6–11 for the full experiment). It was the original architecture choice before the free-tier Gemini path was taken. `reasoning_effort="high"` replaces `thinking_budget=1024`. Structured output uses `.beta.chat.completions.parse` with the same Pydantic response model. `OPENAI_API_KEY` replaces `GEMINI_API_KEY`. Model and reasoning effort are hardcoded (`o4-mini`, `"high"`).
 
