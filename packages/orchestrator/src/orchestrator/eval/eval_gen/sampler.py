@@ -219,7 +219,7 @@ def main() -> None:
     import argparse
     from dotenv import load_dotenv
     load_dotenv()
-    parser = argparse.ArgumentParser(prog="orchestrator.eval_gen.sampler")
+    parser = argparse.ArgumentParser(prog="orchestrator.eval.eval_gen.sampler")
     parser.add_argument("--seed", type=int, default=1, help="master RNG seed")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     args = parser.parse_args()

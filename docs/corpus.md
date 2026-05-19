@@ -8,11 +8,11 @@ Current training rows are generated synthetic skeletons.
 
 Pipeline:
 
-1. `orchestrator.corpus_gen.discovery` scans cloned Triton-oriented repos and records structural observations.
-2. `orchestrator.corpus_gen.sampler` samples `SkeletonSpec` rows over op category, shape rank, dtype mix, broadcast pattern, reduction axis, fusion shape, and memory pattern.
-3. `orchestrator.corpus_gen.driver` asks Codex CLI to synthesize standalone PyTorch functions, validates them with AST checks, and deduplicates against the locked eval holdout.
-4. `orchestrator.dataset.preflight_driver` runs eager-vs-Inductor preflight and writes accepted rows.
-5. `orchestrator.dataset.main` consumes the preflight-safe file, rehydrates rows as training `CorpusRecord`s, and writes `data/dataset/dataset.jsonl` plus `data/dataset/errors.jsonl`.
+1. `orchestrator.train.corpus_gen.discovery` scans cloned Triton-oriented repos and records structural observations.
+2. `orchestrator.train.corpus_gen.sampler` samples `SkeletonSpec` rows over op category, shape rank, dtype mix, broadcast pattern, reduction axis, fusion shape, and memory pattern.
+3. `orchestrator.train.corpus_gen.driver` asks Codex CLI to synthesize standalone PyTorch functions, validates them with AST checks, and deduplicates against the locked eval holdout.
+4. `orchestrator.train.dataset.preflight_driver` runs eager-vs-Inductor preflight and writes accepted rows.
+5. `orchestrator.train.dataset.main` consumes the preflight-safe file, rehydrates rows as training `CorpusRecord`s, and writes `data/dataset/dataset.jsonl` plus `data/dataset/errors.jsonl`.
 
 The active training input is `data/preflight_safe.jsonl` by default (`TRIED_CORPUS_PATH` can override it). Persisted preflight-safe rows are intentionally slim: `example_id`, `op_category`, `pytorch_code`, `input_shapes`, `input_dtypes`, `rng_seed`, and `tolerance_policy`. When loaded for the dataset loop, they become `split="train"`, `origin="synthetic/skeleton"`, `difficulty=null`, and a derived `dataset_id` that uniquely identifies the exact task.
 
@@ -46,4 +46,4 @@ Store in `source.pytorch_code`. Generated training rows use `origin="synthetic/s
 ## What is NOT done
 
 - Triton implementations from source repos are never indexed into RAG and never appear in generator prompts.
-- Eval examples are never used as training rows, RAG retrieval, or prompt examples. They are read only by `orchestrator.eval_run`.
+- Eval examples are never used as training rows, RAG retrieval, or prompt examples. They are read only by `orchestrator.eval.eval_run`.

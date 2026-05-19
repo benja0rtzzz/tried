@@ -1,0 +1,131 @@
+# Environment specification snapshot for TRIED.
+#
+# Values under `orchestrator` are recorded from the actual MacBook and
+# Lenovo computer used.
+#
+# This file is the canonical answer to "what software/hardware was this
+# run on?". docs/repeatability.md references this file.
+#
+
+schema_version: 1
+recorded_at: 2026-05-18
+
+# --------------------------------------------------------------------------
+# Orchestrator (MacBook)
+# --------------------------------------------------------------------------
+
+orchestrator:
+  hardware:
+    machine_model: "Mac16,8"      # M4 Pro family, MacBook Pro
+    chip:          "Apple M4 Pro"
+    cpu_cores:     12
+    memory_bytes:  51539607552    # 48 GiB
+  os:
+    name:          macOS
+    version:       "26.4.1"
+    build:         "25E253"
+    kernel:        "Darwin 25.4.0 arm64"
+  toolchain:
+    python:        "3.14.3"
+    uv:            "0.8.4"
+    # Locked dependency tree lives in uv.lock at the repo root. Do NOT
+    # duplicate package versions here — uv.lock is the source of truth.
+    uv_lock:       uv.lock
+  generator:
+    runtime:           ollama
+    ollama_version:    "0.24.0"
+    model_tag:         "qwen2.5-coder:14b"
+    # Manifest config digest (`ollama show` short id 9ec8897f747e).
+    # Re-pulling the tag may change this; record again if it does.
+    model_manifest_digest: "sha256:0578f229f23ad620e123654fd0b4708405e7af3629ec1aecf3f553f54e06bc40"
+    # GGUF weights layer digest. This is the actual model bytes.
+    model_weights_digest:  "sha256:ac9bc7a69dab38da1c790838955f1293420b55ab555ef6b4615efa1c1507b1ed"
+    quantization:      "Q4_K_M"
+    parameters:        "14.8B"
+    context_length:    32768
+    # Sampling options set in clients/generator_client.py. Anything not
+    # listed here uses the Ollama default — most importantly seed defaults
+    # to 0, which is greedy/deterministic at temperature=0.
+    sampling:
+      temperature:   0
+      num_predict:   2048
+      seed:          "ollama_default (0)"
+  judge:
+    runtime:        codex_cli
+    cli_version:    "codex-cli 0.130.0"
+    # Codex CLI profile name — declared in ~/.codex/config.toml as:
+    #   [profiles.gpt-5-3-codex]
+    #   model = "gpt-5.3-codex"
+    #   review_model = "gpt-5.3-codex"
+    #   model_reasoning_effort = "high"
+    #   personality = "pragmatic"
+    profile:                gpt-5-3-codex
+    model:                  "gpt-5.3-codex"
+    model_provider:         oca
+    model_reasoning_effort: high
+    # The model itself is hosted — its weights and serving stack can change
+    # at any time. Bit-for-bit reproducibility is impossible; qualitative
+    # reproducibility is the contract.
+
+# --------------------------------------------------------------------------
+# Verification server (Lenovo LOQ, RTX 4060 8 GB)
+# --------------------------------------------------------------------------
+
+verification:
+  # Hosted on WSL2 (Ubuntu) on a Windows laptop, not bare-metal Linux.
+  # Triton + Inductor use NVIDIA's WSL driver path — same kernels,
+  # different runtime than a bare-metal RTX 4060 box. Worth flagging
+  # for anyone trying to reproduce.
+  host_kind:        wsl2_on_windows
+  hardware:
+    machine:        "LENOVO 82XU"   # Windows Win32_ComputerSystem.Model
+    cpu:            "AMD Ryzen 7 7840HS w/ Radeon 780M Graphics"
+    # 16,309,932,032 B ≈ 15.19 GiB host-installed RAM (some reserved for
+    # the iGPU). /proc/meminfo inside WSL would show ~7.9 GB, which is
+    # the WSL VM allocation — do not record that value.
+    memory_bytes:   16309932032
+    gpu:            "NVIDIA GeForce RTX 4060 Laptop GPU"
+    gpu_memory_mb:  8188
+    sm_arch:        "8.9"
+  os:
+    name:           "Ubuntu"
+    version:        "24.04.1 LTS (Noble Numbat)"
+    kernel:         "5.15.167.4-microsoft-standard-WSL2 x86_64"
+  toolchain:
+    python:         "3.12.3"
+    uv:             "uv 0.11.8 (x86_64-unknown-linux-gnu)"
+    gcc:            "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+    cuda_runtime:   ""
+    cuda_driver:    "13.0"
+    nvidia_driver:  "581.86"
+  python_packages:
+    torch:          "2.11.0+cu130"
+    triton:         "3.6.0"
+    fastapi:        "0.136.0"
+    uvicorn:        "0.45.0"
+  uv_lock_path:     uv.lock         # same lock as the orchestrator
+
+# --------------------------------------------------------------------------
+# Pinned external corpora
+# --------------------------------------------------------------------------
+
+reference_repos:
+  manifest:        .repos/COMMITS.txt
+  reset_command:   ".repos/clone.sh --reset"
+  notes: |
+    16 repos, each shallow-cloned and pinned to the SHA recorded in
+    COMMITS.txt. Discovery (orchestrator.train.corpus_gen.discovery) walks
+    these to produce data/corpus_gen/observations.jsonl.
+
+# --------------------------------------------------------------------------
+# Locked invariants (never edited mid-experiment)
+# --------------------------------------------------------------------------
+
+locked:
+  schema_dataset:    packages/shared/src/shared/schema/dataset/
+  schema_eval:       packages/shared/src/shared/schema/eval/
+  tolerance_policy:  packages/shared/src/shared/verification/tolerance.py
+  generator_prompt:  packages/orchestrator/src/orchestrator/prompts/generator/
+  judge_prompt:      packages/orchestrator/src/orchestrator/prompts/judge/
+  skeleton_prompt:   packages/orchestrator/src/orchestrator/corpus_gen/prompt.py
+  eval_holdout:      eval/holdout/synthetic_fusions.jsonl

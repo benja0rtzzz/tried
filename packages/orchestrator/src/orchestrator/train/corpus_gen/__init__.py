@@ -1,6 +1,6 @@
 """Training-corpus skeleton generator.
 
-Pipeline (mirrors orchestrator.eval_gen but produces training inputs, not eval rows):
+Pipeline (mirrors orchestrator.eval.eval_gen but produces training inputs, not eval rows):
 
   1. discovery     — walk .repos/, classify every @triton.jit callsite into
                      (op_category, structural pattern). Outputs observations.jsonl.

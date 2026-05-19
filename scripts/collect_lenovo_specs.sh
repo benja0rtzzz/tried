@@ -60,6 +60,22 @@ resolve_nvidia_smi() {
   return 1
 }
 
+# Resolve PowerShell on WSL2: prefer the appendWindowsPath alias, fall back
+# to the Windows-side absolute path. Prints the resolved command on stdout;
+# returns 1 if neither is reachable.
+resolve_powershell() {
+  if command -v powershell.exe >/dev/null 2>&1; then
+    printf 'powershell.exe'
+    return 0
+  fi
+  local abs="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+  if [[ -x "$abs" ]]; then
+    printf '%s' "$abs"
+    return 0
+  fi
+  return 1
+}
+
 # --- Hardware --------------------------------------------------------------
 
 machine=""
@@ -67,13 +83,15 @@ if [[ -r /sys/class/dmi/id/product_name ]]; then
   machine="$(cat /sys/class/dmi/id/product_name 2>/dev/null | tr -d '\n')"
 fi
 if [[ -z "$machine" ]] && (( IS_WSL )); then
-  # Try Windows-side via PowerShell, returns vendor + model
-  if command -v powershell.exe >/dev/null 2>&1; then
-    machine="$(powershell.exe -NoProfile -Command \
+  if pwsh_cmd="$(resolve_powershell)"; then
+    note "powershell resolved to: ${pwsh_cmd}"
+    machine="$("$pwsh_cmd" -NoProfile -Command \
       "(Get-CimInstance Win32_ComputerSystem | ForEach-Object { \$_.Manufacturer + ' ' + \$_.Model })" \
       2>/dev/null | tr -d '\r\n' | sed 's/  */ /g')"
+    [[ -z "$machine" ]] && note "machine: PowerShell returned empty; check Win32_ComputerSystem availability"
+  else
+    note "machine: WSL2 hides host DMI and PowerShell is not reachable (not on PATH and /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe missing); set this manually"
   fi
-  [[ -z "$machine" ]] && note "machine: WSL2 hides host DMI; install powershell.exe interop or set this manually (e.g. \"Lenovo LOQ 15IRX9\")"
 elif [[ -z "$machine" ]]; then
   note "machine: /sys/class/dmi/id/product_name unreadable; set this manually"
 fi
@@ -86,18 +104,18 @@ memory_bytes="$memory_bytes_raw"
 memory_note=""
 if (( IS_WSL )) && [[ -n "$memory_bytes_raw" ]]; then
   # /proc/meminfo inside WSL2 reports the VM allocation, not host RAM.
-  if command -v powershell.exe >/dev/null 2>&1; then
-    host_bytes="$(powershell.exe -NoProfile -Command \
+  if pwsh_cmd="$(resolve_powershell)"; then
+    host_bytes="$("$pwsh_cmd" -NoProfile -Command \
       "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory" 2>/dev/null | tr -d '\r\n')"
     if [[ "$host_bytes" =~ ^[0-9]+$ ]]; then
       memory_bytes="$host_bytes"
-      memory_note=" (host-reported via WSL interop; /proc/meminfo would have shown the WSL VM cap of ${memory_bytes_raw})"
+      memory_note=" # host-reported via WSL interop; /proc/meminfo would have shown the WSL VM cap of ${memory_bytes_raw}"
       note "memory_bytes: replaced WSL VM allocation (${memory_bytes_raw}) with host total (${host_bytes}) via PowerShell interop"
     else
-      note "memory_bytes: /proc/meminfo reports the WSL VM cap (${memory_bytes_raw}); fix .wslconfig or set this manually to the laptop's installed RAM"
+      note "memory_bytes: PowerShell returned non-numeric output (${host_bytes:-empty}); /proc/meminfo had ${memory_bytes_raw} but that is the WSL VM cap"
     fi
   else
-    note "memory_bytes: /proc/meminfo reports the WSL VM cap (${memory_bytes_raw}); install powershell.exe interop or set this manually"
+    note "memory_bytes: /proc/meminfo reports the WSL VM cap (${memory_bytes_raw}) and PowerShell is not reachable; set this manually to the laptop's installed RAM"
   fi
 fi
 [[ -z "$memory_bytes" ]] && note "memory_bytes: /proc/meminfo did not contain MemTotal"

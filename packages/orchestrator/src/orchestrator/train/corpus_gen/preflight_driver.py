@@ -1,7 +1,7 @@
 """Run /preflight on synthesized corpus candidates and append slim survivors.
 
 This module is kept for compatibility with the older corpus_gen entry point.
-The active Step 5 preflight command is orchestrator.dataset.preflight_driver;
+The active Step 5 preflight command is orchestrator.train.dataset.preflight_driver;
 both write PreflightSafeRecord rows to data/preflight_safe.jsonl.
 """
 from __future__ import annotations
@@ -167,7 +167,7 @@ def run(with_code_path: Path, out_path: Path, skipped_path: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="orchestrator.corpus_gen.preflight_driver")
+    parser = argparse.ArgumentParser(prog="orchestrator.train.corpus_gen.preflight_driver")
     parser.add_argument("--with-code", type=Path, default=DEFAULT_WITH_CODE)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--skipped", type=Path, default=DEFAULT_SKIPPED)

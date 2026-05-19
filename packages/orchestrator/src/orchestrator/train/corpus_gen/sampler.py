@@ -297,7 +297,7 @@ def write_specs(specs: list[SkeletonSpec], out_path: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="orchestrator.corpus_gen.sampler")
+    parser = argparse.ArgumentParser(prog="orchestrator.train.corpus_gen.sampler")
     parser.add_argument("--observations", type=Path, default=DEFAULT_OBS)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--n", type=int, default=sum(QUOTAS.values()))

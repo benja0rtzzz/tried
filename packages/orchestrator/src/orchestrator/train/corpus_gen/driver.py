@@ -264,7 +264,7 @@ def run(specs_path: Path, out_path: Path, rejected_path: Path, eval_path: Path, 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="orchestrator.corpus_gen.driver")
+    parser = argparse.ArgumentParser(prog="orchestrator.train.corpus_gen.driver")
     parser.add_argument("--specs", type=Path, default=DEFAULT_SPECS)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--rejected", type=Path, default=DEFAULT_REJECTED)

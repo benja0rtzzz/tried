@@ -4,6 +4,12 @@ Lightweight record of non-obvious decisions. Full reasoning lives in the Claude 
 All entrees here are accepted.
 ---
 
+## 2026-05-18 — Orchestrator subpackages regrouped into `train/` and `eval/`
+
+`corpus_gen/` and `dataset/` moved under `orchestrator/train/`; `eval_gen/` and `eval_run/` moved under `orchestrator/eval/`. Shared infrastructure (`clients/`, `prompts/`, `improvement/`) stays at the package root. All internal imports, `prog=` strings, docstrings, and docs updated to the new paths. No behavior change. Run commands updated: `orchestrator.train.dataset.main`, `orchestrator.train.dataset.preflight_driver`, `orchestrator.eval.eval_run.main`, `orchestrator.train.corpus_gen.*`.
+
+---
+
 ## 2026-05-18 — Dataset dedup moved to source `example_id`; equal-N per-category cap; one-shot `dataset.jsonl` cleanup
 
 Fine-tuning readiness analysis on the 1426-row dataset showed the usable signal was thin and skewed, not the row count. Only 468 rows had a passing attempt (332 unique sources); the SFT pool was dominated by easy ops (elementwise 82%, activation 66%) while the hard, high-value ones were near-zero (matmul 0.4%, embedding 3%, convolution 7%). The 323 "reused" rows were shape/dtype/seed variants of the same source `example_id` — legitimate distinct `dataset_id`s under the old policy, but near-duplicate PyTorch source for training. Targeting weak categories cannot grow the SFT-positive pool (the bottleneck is generator capability, not corpus coverage: 595 fresh unique matmul sources sit unused), so the remaining ~6 nights of compute are redirected to DPO and to an equal-N-per-category baseline that supports the honest claim "Qwen2.5-Coder-14B cannot produce accurate matmul Triton under the locked prompt."

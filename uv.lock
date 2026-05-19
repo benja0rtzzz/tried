@@ -8,7 +8,6 @@ members = [
     "tried-orchestrator",
     "tried-shared",
     "tried-stats",
-    "tried-tests",
     "tried-verification",
 ]
 
@@ -1336,7 +1335,6 @@ dependencies = [
     { name = "tried-orchestrator" },
     { name = "tried-shared" },
     { name = "tried-stats" },
-    { name = "tried-tests" },
 ]
 
 [package.dev-dependencies]
@@ -1350,7 +1348,6 @@ requires-dist = [
     { name = "tried-orchestrator", editable = "packages/orchestrator" },
     { name = "tried-shared", editable = "packages/shared" },
     { name = "tried-stats", editable = "packages/stats" },
-    { name = "tried-tests", virtual = "packages/tests" },
 ]
 
 [package.metadata.requires-dev]
@@ -1406,31 +1403,6 @@ dependencies = [
 requires-dist = [
     { name = "tabulate", specifier = ">=0.9" },
     { name = "tried-shared", editable = "packages/shared" },
-]
-
-[[package]]
-name = "tried-tests"
-version = "0.1.0"
-source = { virtual = "packages/tests" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "pytest" },
-    { name = "python-dotenv" },
-    { name = "tried-orchestrator" },
-    { name = "tried-shared" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.111" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "tried-orchestrator", editable = "packages/orchestrator" },
-    { name = "tried-shared", editable = "packages/shared" },
-    { name = "uvicorn", specifier = ">=0.29" },
 ]
 
 [[package]]

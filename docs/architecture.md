@@ -9,7 +9,7 @@
 
 ## Dataset Agent Loop
 
-The training dataset pipeline consumes preflight-safe synthetic skeleton rows from `data/preflight_safe.jsonl`. The eager-vs-Inductor preflight is done upstream by `orchestrator.dataset.preflight_driver`; rows reaching `orchestrator.dataset.main` are assumed clean. The `tolerance_policy` selected before preflight is carried in the row and reused by the dataset loop; it is not recomputed there.
+The training dataset pipeline consumes preflight-safe synthetic skeleton rows from `data/preflight_safe.jsonl`. The eager-vs-Inductor preflight is done upstream by `orchestrator.train.dataset.preflight_driver`; rows reaching `orchestrator.train.dataset.main` are assumed clean. The `tolerance_policy` selected before preflight is carried in the row and reused by the dataset loop; it is not recomputed there.
 
 ```
 PyTorch input

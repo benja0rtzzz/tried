@@ -286,7 +286,7 @@ def main() -> None:
     from dotenv import load_dotenv
     load_dotenv()
     parser = argparse.ArgumentParser(
-        prog="orchestrator.eval_gen.preflight_driver",
+        prog="orchestrator.eval.eval_gen.preflight_driver",
         description="Run /preflight on Block-C output; produce EvalCorpusRecord rows.",
     )
     parser.add_argument("--with-code", type=Path, default=DEFAULT_WITH_CODE)

@@ -13,7 +13,7 @@ Writes:
 Resumable: rows already present in either output file are skipped.
 
 Usage (from project root):
-  TRIED_ROLE=orchestrator uv run python -m orchestrator.dataset.preflight_driver
+  TRIED_ROLE=orchestrator uv run python -m orchestrator.train.dataset.preflight_driver
 """
 from __future__ import annotations
 
@@ -162,7 +162,7 @@ def main() -> None:
         sys.exit(1)
 
     parser = argparse.ArgumentParser(
-        prog="orchestrator.dataset.preflight_driver",
+        prog="orchestrator.train.dataset.preflight_driver",
         description="Pre-screen training corpus through /preflight before the agent loop.",
     )
     parser.add_argument(

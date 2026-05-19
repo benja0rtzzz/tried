@@ -6,7 +6,7 @@ rows to eval/results/<model_label>/eval_rows.jsonl. No judge calls;
 classification is derived from compile/correctness/benchmark.
 
 Usage:
-    TRIED_ROLE=orchestrator uv run python -m orchestrator.eval_run.main \\
+    TRIED_ROLE=orchestrator uv run python -m orchestrator.eval.eval_run.main \\
         --model-label qwen2.5-coder:14b-vanilla
 
 Required env vars:
@@ -30,7 +30,7 @@ from shared.logging import get_logger
 from shared.models import EvalCorpusRecord
 
 from orchestrator.clients.verification_client import make_client
-from orchestrator.eval_run.agent import run_eval_job
+from orchestrator.eval.eval_run.agent import run_eval_job
 
 _log = get_logger(__name__)
 
@@ -94,7 +94,7 @@ def main() -> None:
     from dotenv import load_dotenv
     load_dotenv()
     parser = argparse.ArgumentParser(
-        prog="orchestrator.eval_run.main",
+        prog="orchestrator.eval.eval_run.main",
         description="Run the agent loop on the locked eval set; produce EvalRecord rows.",
     )
     parser.add_argument(

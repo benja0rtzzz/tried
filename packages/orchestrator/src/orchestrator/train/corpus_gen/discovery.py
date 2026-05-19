@@ -281,7 +281,7 @@ def run(out_path: Path, repos_root: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="orchestrator.corpus_gen.discovery")
+    parser = argparse.ArgumentParser(prog="orchestrator.train.corpus_gen.discovery")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--repos-root", type=Path, default=DEFAULT_REPOS_ROOT)
     args = parser.parse_args()

@@ -235,7 +235,7 @@ def main() -> None:
     from dotenv import load_dotenv
     load_dotenv()
     parser = argparse.ArgumentParser(
-        prog="orchestrator.eval_gen.driver",
+        prog="orchestrator.eval.eval_gen.driver",
         description="Run stage 2 (Codex) + stage 3 (AST + dedup) on sampled specs.",
     )
     parser.add_argument("--specs", type=Path, default=DEFAULT_SPECS)

@@ -2,7 +2,7 @@
 Entry point for the TRIED orchestrator dataset-generation pipeline.
 
 Usage (from the project root):
-    TRIED_ROLE=orchestrator uv run python -m orchestrator.dataset.main
+    TRIED_ROLE=orchestrator uv run python -m orchestrator.train.dataset.main
 
 Required env vars: see packages/orchestrator/.env
 Optional env vars:
@@ -10,7 +10,7 @@ Optional env vars:
     TRIED_DATA_DIR         — legacy dataset output override; ignored when "data"
     TRIED_CORPUS_PATH      — path to the preflight-safe corpus JSONL
                              (default: data/preflight_safe.jsonl)
-                             Run orchestrator.dataset.preflight_driver first to
+                             Run orchestrator.train.dataset.preflight_driver first to
                              produce this file.
     TRIED_MAX_PER_CATEGORY — max total unique source example_ids per op
                              category (default: 180). Rows already in
@@ -45,7 +45,7 @@ from shared.enums import OpCategory
 from shared.logging import get_logger
 from shared.models import CorpusRecord, PreflightSafeRecord
 
-from orchestrator.dataset.agent import run_job
+from orchestrator.train.dataset.agent import run_job
 from orchestrator.clients.judge_client import RateLimitError
 from orchestrator.clients.verification_client import make_client
 
@@ -225,7 +225,7 @@ def main() -> None:
 
     if not corpus_path.exists():
         _log.error(
-            "corpus not found: %s — run orchestrator.dataset.preflight_driver first",
+            "corpus not found: %s — run orchestrator.train.dataset.preflight_driver first",
             corpus_path,
         )
         sys.exit(1)
