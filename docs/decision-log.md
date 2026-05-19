@@ -4,6 +4,21 @@ Lightweight record of non-obvious decisions. Full reasoning lives in the Claude 
 All entrees here are accepted.
 ---
 
+## 2026-05-18 — Dataset dedup moved to source `example_id`; equal-N per-category cap; one-shot `dataset.jsonl` cleanup
+
+Fine-tuning readiness analysis on the 1426-row dataset showed the usable signal was thin and skewed, not the row count. Only 468 rows had a passing attempt (332 unique sources); the SFT pool was dominated by easy ops (elementwise 82%, activation 66%) while the hard, high-value ones were near-zero (matmul 0.4%, embedding 3%, convolution 7%). The 323 "reused" rows were shape/dtype/seed variants of the same source `example_id` — legitimate distinct `dataset_id`s under the old policy, but near-duplicate PyTorch source for training. Targeting weak categories cannot grow the SFT-positive pool (the bottleneck is generator capability, not corpus coverage: 595 fresh unique matmul sources sit unused), so the remaining ~6 nights of compute are redirected to DPO and to an equal-N-per-category baseline that supports the honest claim "Qwen2.5-Coder-14B cannot produce accurate matmul Triton under the locked prompt."
+
+Policy changes (operational — not schema/prompt/tolerance, which stay locked):
+- **Dedup is now by source `example_id`, not `dataset_id`.** `_load_corpus` collapses shape/dtype/seed variants to one row per source (first-seen wins; `preflight_safe.jsonl` is deterministically shuffled, so reproducible). Variant skips are an expected INFO summary, not `errors.jsonl` entries. Resume now skips every `example_id` already in `dataset.jsonl` (`DatasetIndex.completed_example_ids`, added to `shared/dataset`), so no source is processed twice across runs. `derive_dataset_id` is unchanged — `example_id` dedup subsumes the seed/shape variation case.
+- **Per-category cap** `TRIED_MAX_PER_CATEGORY` (default 180) on total unique `example_id`s per op category; rows already collected count toward it, so a night fills the lagging categories rather than re-saturating full ones. Reaching parity needs ~593 new sources (~3 nights at 250/night); activation (171) and embedding (74) are corpus-ceiling-limited below 180; matmul/convolution are already ≥180.
+- **`ALLOWED_OPS`** hardcoded constant in `dataset/main.py` restricts which categories a run loads (`None` = all); validated against the `OpCategory` enum at startup (a typo aborts).
+
+One-shot data edit (user-authorized, overriding "never delete failed attempts" for this single cleanup, mirroring the 2026-05-09 eval cleanup precedent): `dataset.jsonl` was deduped from 1426 → 1103 rows, one per `example_id`, keeping the best row per source (rank: `final_outcome` tier `compiled_correct`>`numeric_fail`>`runtime_fail`>`compile_fail`, then more attempts, then earliest). All 332 passing sources were preserved. Original backed up to `data/dataset/dataset.pre-eid-dedup-20260518.jsonl`; audit manifest (per-category before/after, dropped→kept map) at `data/dataset/dataset.eid-dedup-20260518.json`. The dataset is therefore heterogeneous by construction: rows ≤2026-05-18 were collected under the `dataset_id`-variant policy then deduped to one-per-source; rows after are one-per-source by ingestion. This is acceptable because the dataset is training material, not a measured experimental variable — the locked-holdout eval is the experiment.
+
+Implementation: `packages/shared/src/shared/dataset/__init__.py` (`DatasetIndex.completed_example_ids`), `packages/orchestrator/src/orchestrator/dataset/main.py` (`ALLOWED_OPS`, `_validated_allowed_ops`, `example_id` dedup in `_load_corpus`, resume/ALLOWED_OPS/cap in `main`), the one-shot `dataset.jsonl` rewrite + backup + manifest, and this entry.
+
+---
+
 ## 2026-05-12 — Dataset loop shortened to 3 attempts and shuffled input order
 
 The first live dataset rows showed a ~4 minute per-row cadence because every row used five attempts and every attempt called the judge, including the terminal attempt whose advice could not be consumed. The active `preflight_safe.jsonl` was also grouped by category, with a long matmul prefix, which made early progress unrepresentative and would spend days on one family before sampling the rest.
@@ -53,16 +68,6 @@ Forcing a real cold compile per row (clearing `torch._inductor` caches between r
 Superseded on 2026-05-12: `attempts[winning].latency.compile_ms` is static `/compile` validation latency, not shape-aware Triton launch compilation. It should not be used as "Triton compile time" for the paired t-test target unless the endpoint contract changes.
 
 Implementation: removed `BaselineCompile` from `shared/models.py`; removed `baseline_compile` from `EvalRecord` and `schema/eval/eval_result.json`; stripped `baseline_compile` from existing `eval/results/qwen2.5-coder:14b-vanilla/eval_rows.jsonl`; simplified `eval_run/agent.py` (no longer builds `BaselineCompile` and no longer rejects preflights with null first-call timings, since `passed=True` is sufficient); replaced `descriptive.baseline_compile_stats` with `descriptive.triton_compile_stats` and re-wired the report; renamed `hypothesis.paired_t_log_compile` to `paired_t_log_triton_compile`; updated `docs/eval-stats.md` (course-week table, Group A/B tables, Week 4 sample-size).
-
----
-
-## 2026-05-09 — Eval set cleanup to 437 unique example_ids; `model_label` dropped from EvalRecord
-
-The vanilla qwen eval finished and surfaced two issues. First, `eval/holdout/synthetic_fusions.jsonl` carried 4 duplicate `example_id`s from the spec sampler (443 lines, 439 unique), and the harness faithfully ran the duplicates twice — `eval_rows.jsonl` ended at 441 lines / 437 unique with 2 specs that never produced an `EvalRecord`. Second, `model_label` was an in-record field on every `EvalRecord` even though every row in a given file shares the same value; the parent directory `eval/results/<label>/` already identifies the condition, so the field was pure redundancy.
-
-Both files were rewritten to the same 437 unique `example_id`s — duplicate occurrences dropped first-seen-wins, and the 2 specs missing from results were dropped from holdout to keep the fine-tuned eval aligned with vanilla. The held-out eval is in the locked set; this edit was authorized by the user as a one-shot cleanup before the second run, with no agent-loop or scoring change. `model_label` was removed from `schema/eval/eval_result.json` (now 7 required fields), `EvalRecord` in `shared/models.py`, and the orchestrator writer; the orchestrator CLI still takes `--model-label` to determine the output folder. The tier counts moved from the original plan's 105 / 115 / 80 to the empirical 103 / 217 / 117 — `docs/corpus.md` and `docs/eval-stats.md` updated to match. Sample-size analysis at n=437 is at least as powerful as the original n=300 plan.
-
-Implementation: `eval/holdout/synthetic_fusions.jsonl`, `eval/results/qwen2.5-coder:14b-vanilla/eval_rows.jsonl`, `packages/shared/src/shared/schema/eval/eval_result.json`, `packages/shared/src/shared/models.py` (`EvalRecord`), `packages/orchestrator/src/orchestrator/eval_run/agent.py`, `docs/corpus.md`, `docs/eval-stats.md`.
 
 ---
 

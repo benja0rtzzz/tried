@@ -9,7 +9,7 @@ __pycache__/
 dist/
 build/
 
-# Data — gitignore all except small samples
+# Data
 data/
 !data/samples/
 
