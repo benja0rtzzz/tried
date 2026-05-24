@@ -46,7 +46,7 @@ from shared.logging import get_logger
 from shared.models import CorpusRecord, PreflightSafeRecord
 
 from orchestrator.train.dataset.agent import run_job
-from orchestrator.clients.judge_client import RateLimitError
+from orchestrator.clients.dataset.judge_client import RateLimitError
 from orchestrator.clients.verification_client import make_client
 
 _log = get_logger(__name__)

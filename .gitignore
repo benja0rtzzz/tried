@@ -11,7 +11,6 @@ build/
 
 # Data
 data/
-!data/samples/
 
 # Environment / secrets
 .env
@@ -26,7 +25,7 @@ data/
 .idea/
 *.swp
 
-# tests/
-.testdata/
 
 .presentations/
+.report/
+.video/
