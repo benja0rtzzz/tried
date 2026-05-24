@@ -44,8 +44,8 @@ from shared.verification.api import (
     RunResponse,
 )
 
-from orchestrator.clients.generator_client import GeneratorResult, generate
-from orchestrator.clients.judge_client import JudgeResult, judge
+from orchestrator.clients.dataset.generator_client import GeneratorResult, generate
+from orchestrator.clients.dataset.judge_client import JudgeResult, judge
 from orchestrator.clients.verification_client import VerificationClient
 from orchestrator.prompts.judge import AttemptContext
 

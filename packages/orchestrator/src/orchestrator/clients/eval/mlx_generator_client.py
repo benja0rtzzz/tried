@@ -64,7 +64,12 @@ def generate(
         add_generation_prompt=True,
     )
 
+    import mlx.core as mx
     from mlx_lm import generate as mlx_generate
+    from mlx_lm.sample_utils import make_sampler
+
+    mx.random.seed(int(cfg["seed"]))
+    sampler = make_sampler(temp=float(cfg["temperature"]))
 
     t0 = time.monotonic()
     response = mlx_generate(
@@ -72,7 +77,7 @@ def generate(
         _tokenizer,
         prompt=prompt,
         max_tokens=cfg["max_tokens"],
-        temp=float(cfg["temperature"]),
+        sampler=sampler,
         verbose=False,
     )
     latency_ms = int((time.monotonic() - t0) * 1000)
