@@ -28,6 +28,30 @@ DEFAULT_REJECTED = Path("data/corpus_gen/rejected.jsonl")
 DEFAULT_EVAL = Path("eval/holdout/synthetic_fusions.jsonl")
 
 
+def _parse_allowed_ops(raw_values: list[str] | None) -> set[OpCategory] | None:
+    if raw_values is None:
+        return None
+
+    values = [
+        value.strip()
+        for raw in raw_values
+        for value in raw.split(",")
+        if value.strip()
+    ]
+    valid = {category.value for category in OpCategory}
+    invalid = [value for value in values if value not in valid]
+    if invalid:
+        raise ValueError(
+            "invalid op categories: "
+            + ", ".join(invalid)
+            + "; valid values: "
+            + ", ".join(sorted(valid))
+        )
+    if not values:
+        raise ValueError("--allowed-ops was provided but no categories were listed")
+    return {OpCategory(value) for value in values}
+
+
 @dataclass(frozen=True)
 class WithCodeRow:
     spec_id: str
@@ -248,9 +272,26 @@ def _run_parallel(specs: list[SkeletonSpec], dedup: EvalDedup, out_path: Path, r
     return False
 
 
-def run(specs_path: Path, out_path: Path, rejected_path: Path, eval_path: Path, parallel: int) -> bool:
+def run(
+    specs_path: Path,
+    out_path: Path,
+    rejected_path: Path,
+    eval_path: Path,
+    parallel: int,
+    allowed_ops: set[OpCategory] | None = None,
+) -> bool:
     specs = _load_specs(specs_path)
     logger.info("loaded %d specs from %s", len(specs), specs_path)
+
+    if allowed_ops is not None:
+        before = len(specs)
+        specs = [spec for spec in specs if spec.op_category in allowed_ops]
+        logger.info(
+            "allowed ops %s: filtered %d spec(s), %d remain",
+            [category.value for category in sorted(allowed_ops, key=lambda c: c.value)],
+            before - len(specs),
+            len(specs),
+        )
 
     processed = _collect_processed_spec_ids(out_path, rejected_path)
     if processed:
@@ -270,7 +311,18 @@ def main() -> None:
     parser.add_argument("--rejected", type=Path, default=DEFAULT_REJECTED)
     parser.add_argument("--eval", type=Path, default=DEFAULT_EVAL)
     parser.add_argument("--parallel", type=int, default=1)
+    parser.add_argument(
+        "--allowed-ops",
+        nargs="+",
+        default=None,
+        metavar="OP_CATEGORY",
+        help="only synthesize specs from these op categories; accepts spaces or commas",
+    )
     args = parser.parse_args()
+    try:
+        allowed_ops = _parse_allowed_ops(args.allowed_ops)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if run(
         specs_path=args.specs,
@@ -278,6 +330,7 @@ def main() -> None:
         rejected_path=args.rejected,
         eval_path=args.eval,
         parallel=max(1, args.parallel),
+        allowed_ops=allowed_ops,
     ):
         sys.exit(0)
 

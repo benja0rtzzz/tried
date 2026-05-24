@@ -23,6 +23,7 @@ import os
 import sys
 from pathlib import Path
 
+from shared.enums import OpCategory
 from shared.logging import get_logger
 from shared.models import PreflightSafeRecord
 from shared.verification.api import PreflightRequest
@@ -36,6 +37,30 @@ _REQUIRED_ENV = ["VERIFICATION_SERVER_URL", "VERIFICATION_API_KEY"]
 DEFAULT_WITH_CODE = Path("data/corpus_gen/with_code.jsonl")
 DEFAULT_SAFE     = Path("data/preflight_safe.jsonl")
 DEFAULT_REJECTED = Path("data/preflight_rejected.jsonl")
+
+
+def _parse_allowed_ops(raw_values: list[str] | None) -> set[OpCategory] | None:
+    if raw_values is None:
+        return None
+
+    values = [
+        value.strip()
+        for raw in raw_values
+        for value in raw.split(",")
+        if value.strip()
+    ]
+    valid = {category.value for category in OpCategory}
+    invalid = [value for value in values if value not in valid]
+    if invalid:
+        raise ValueError(
+            "invalid op categories: "
+            + ", ".join(invalid)
+            + "; valid values: "
+            + ", ".join(sorted(valid))
+        )
+    if not values:
+        raise ValueError("--allowed-ops was provided but no categories were listed")
+    return {OpCategory(value) for value in values}
 
 
 # ---------------------------------------------------------------------------
@@ -88,9 +113,20 @@ def run(
     safe_path: Path,
     rejected_path: Path,
     limit: int | None,
+    allowed_ops: set[OpCategory] | None = None,
 ) -> None:
     records = _load_corpus(with_code_path)
     _log.info("loaded %d records from %s", len(records), with_code_path)
+
+    if allowed_ops is not None:
+        before = len(records)
+        records = [record for record in records if record.op_category in allowed_ops]
+        _log.info(
+            "allowed ops %s: filtered %d record(s), %d remain",
+            [category.value for category in sorted(allowed_ops, key=lambda c: c.value)],
+            before - len(records),
+            len(records),
+        )
 
     if limit is not None:
         records = records[:limit]
@@ -181,8 +217,19 @@ def main() -> None:
         "--limit", type=int, default=None,
         help="Process only the first N records (for testing)",
     )
+    parser.add_argument(
+        "--allowed-ops",
+        nargs="+",
+        default=None,
+        metavar="OP_CATEGORY",
+        help="only preflight rows from these op categories; accepts spaces or commas",
+    )
     args = parser.parse_args()
-    run(args.with_code, args.safe, args.rejected, args.limit)
+    try:
+        allowed_ops = _parse_allowed_ops(args.allowed_ops)
+    except ValueError as exc:
+        parser.error(str(exc))
+    run(args.with_code, args.safe, args.rejected, args.limit, allowed_ops)
 
 
 if __name__ == "__main__":

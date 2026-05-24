@@ -14,6 +14,7 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 from orchestrator.clients.verification_client import make_client
+from shared.enums import OpCategory
 from shared.logging import get_logger
 from shared.models import PreflightSafeRecord
 from shared.verification.api import PreflightRequest, PreflightResponse
@@ -23,6 +24,30 @@ logger = get_logger(__name__)
 DEFAULT_WITH_CODE = Path("data/corpus_gen/with_code.jsonl")
 DEFAULT_OUT = Path("data/preflight_safe.jsonl")
 DEFAULT_SKIPPED = Path("data/preflight_rejected.jsonl")
+
+
+def _parse_allowed_ops(raw_values: list[str] | None) -> set[OpCategory] | None:
+    if raw_values is None:
+        return None
+
+    values = [
+        value.strip()
+        for raw in raw_values
+        for value in raw.split(",")
+        if value.strip()
+    ]
+    valid = {category.value for category in OpCategory}
+    invalid = [value for value in values if value not in valid]
+    if invalid:
+        raise ValueError(
+            "invalid op categories: "
+            + ", ".join(invalid)
+            + "; valid values: "
+            + ", ".join(sorted(valid))
+        )
+    if not values:
+        raise ValueError("--allowed-ops was provided but no categories were listed")
+    return {OpCategory(value) for value in values}
 
 
 class _WithCodeRow(BaseModel):
@@ -102,9 +127,24 @@ def _build_record(row: _WithCodeRow) -> PreflightSafeRecord:
     return row.candidate
 
 
-def run(with_code_path: Path, out_path: Path, skipped_path: Path) -> None:
+def run(
+    with_code_path: Path,
+    out_path: Path,
+    skipped_path: Path,
+    allowed_ops: set[OpCategory] | None = None,
+) -> None:
     rows = _load_with_code(with_code_path)
     logger.info("loaded %d candidate rows from %s", len(rows), with_code_path)
+
+    if allowed_ops is not None:
+        before = len(rows)
+        rows = [row for row in rows if row.candidate.op_category in allowed_ops]
+        logger.info(
+            "allowed ops %s: filtered %d candidate row(s), %d remain",
+            [category.value for category in sorted(allowed_ops, key=lambda c: c.value)],
+            before - len(rows),
+            len(rows),
+        )
 
     seen = _collect_seen_example_ids(out_path, skipped_path)
     if seen:
@@ -171,8 +211,19 @@ def main() -> None:
     parser.add_argument("--with-code", type=Path, default=DEFAULT_WITH_CODE)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--skipped", type=Path, default=DEFAULT_SKIPPED)
+    parser.add_argument(
+        "--allowed-ops",
+        nargs="+",
+        default=None,
+        metavar="OP_CATEGORY",
+        help="only preflight rows from these op categories; accepts spaces or commas",
+    )
     args = parser.parse_args()
-    run(args.with_code, args.out, args.skipped)
+    try:
+        allowed_ops = _parse_allowed_ops(args.allowed_ops)
+    except ValueError as exc:
+        parser.error(str(exc))
+    run(args.with_code, args.out, args.skipped, allowed_ops)
 
 
 if __name__ == "__main__":

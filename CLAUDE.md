@@ -91,7 +91,6 @@ Week 2 of an 8-week project. Full pipeline operational and ready for data collec
 - Schema, tolerance policy, held-out eval set locked.
 - Verification server complete: `/health`, `/preflight`, `/compile`, `/run`, `/benchmark`, `/jobs/{id}`. Smoke-tested on Lenovo (RTX 4060, CUDA + Inductor + CUDA-Event timing confirmed). `VERIFICATION_API_KEY` enforced at startup.
 - Orchestrator complete: corpus generation, dataset/eval pipelines, generator client (Ollama/qwen2.5-coder:14b), judge client (Codex CLI profile `gpt-5-3-codex`), dataset I/O, and corpus loading.
-- `packages/tests` (`tried-tests`) holds the end-to-end smoke test (`tried_tests.smoke`).
 - Resume logic in `main.py`: on restart, already-completed `dataset_id`s are filtered out so no exact dataset task is processed twice. Transport/validation errors go to `data/dataset/errors.jsonl` and retry on restart.
 - Codex CLI rate-limit handling: judge quota/rate-limit exits stop the run cleanly; restart resumes from where it left off once the rate-limit window clears.
 

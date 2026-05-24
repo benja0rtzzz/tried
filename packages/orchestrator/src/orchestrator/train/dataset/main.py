@@ -74,7 +74,7 @@ _REQUIRED_ENV = [
 # categories rather than re-saturating the full ones.
 ALLOWED_OPS: list[str] | None = None
 
-_DEFAULT_MAX_PER_CATEGORY = 180
+_DEFAULT_MAX_PER_CATEGORY = 250
 
 
 def _validated_allowed_ops() -> set[str] | None:
