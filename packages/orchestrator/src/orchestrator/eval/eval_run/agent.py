@@ -39,7 +39,7 @@ from shared.verification.api import (
     RunResponse,
 )
 
-from orchestrator.clients.generator_client import GeneratorResult, generate
+from orchestrator.clients.eval.mlx_generator_client import GeneratorResult, generate
 from orchestrator.clients.verification_client import VerificationClient
 
 _log = get_logger(__name__)

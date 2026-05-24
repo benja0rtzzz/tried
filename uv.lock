@@ -1366,6 +1366,7 @@ dependencies = [
     { name = "ollama" },
     { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "tried-shared" },
 ]
 
@@ -1376,6 +1377,7 @@ requires-dist = [
     { name = "ollama", specifier = ">=0.3" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "tried-shared", editable = "packages/shared" },
 ]
 
