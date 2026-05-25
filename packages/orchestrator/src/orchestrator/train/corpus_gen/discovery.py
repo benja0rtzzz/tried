@@ -25,6 +25,30 @@ DEFAULT_REPOS_ROOT = Path(".repos")
 _SKIP_DIRS = {".git", "tests", "docs", "examples", "benchmarks", "__pycache__"}
 
 
+def _parse_allowed_ops(raw_values: list[str] | None) -> set[OpCategory] | None:
+    if raw_values is None:
+        return None
+
+    values = [
+        value.strip()
+        for raw in raw_values
+        for value in raw.split(",")
+        if value.strip()
+    ]
+    valid = {category.value for category in OpCategory}
+    invalid = [value for value in values if value not in valid]
+    if invalid:
+        raise ValueError(
+            "invalid op categories: "
+            + ", ".join(invalid)
+            + "; valid values: "
+            + ", ".join(sorted(valid))
+        )
+    if not values:
+        raise ValueError("--allowed-ops was provided but no categories were listed")
+    return {OpCategory(value) for value in values}
+
+
 def _attribute_path(node: ast.AST) -> str | None:
     parts: list[str] = []
     cur = node
@@ -213,12 +237,17 @@ def _load_seen(path: Path) -> set[tuple[str, str, str]]:
     return seen
 
 
-def run(out_path: Path, repos_root: Path) -> None:
+def run(out_path: Path, repos_root: Path, allowed_ops: set[OpCategory] | None = None) -> None:
     commits_path = repos_root / "COMMITS.txt"
     repo_names = _read_repos_from_commits(commits_path)
     seen = _load_seen(out_path)
 
     logger.info("loaded %d repos from %s", len(repo_names), commits_path)
+    if allowed_ops is not None:
+        logger.info(
+            "allowed ops %s: discovery will append only matching observations",
+            [category.value for category in sorted(allowed_ops, key=lambda c: c.value)],
+        )
     if seen:
         logger.info("resume: loaded %d existing observations", len(seen))
 
@@ -255,13 +284,17 @@ def run(out_path: Path, repos_root: Path) -> None:
                     if key in seen:
                         continue
 
-                    blob = f"{rel_path} {node.name}".lower()
+                    function_source = ast.get_source_segment(source, node) or ""
+                    blob = f"{rel_path} {node.name} {function_source}".lower()
+                    op_category = _classify_op_category(blob)
+                    if allowed_ops is not None and op_category not in allowed_ops:
+                        continue
 
                     row = {
                         "repo": repo,
                         "file_path": rel_path,
                         "function_name": node.name,
-                        "op_category": _classify_op_category(blob).value,
+                        "op_category": op_category.value,
                         "shape_rank": _classify_shape_rank(blob).value,
                         "dtype_mix": _classify_dtype_mix(blob).value,
                         "broadcast_pattern": _classify_broadcast(blob).value,
@@ -284,8 +317,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="orchestrator.train.corpus_gen.discovery")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--repos-root", type=Path, default=DEFAULT_REPOS_ROOT)
+    parser.add_argument(
+        "--allowed-ops",
+        nargs="+",
+        default=None,
+        metavar="OP_CATEGORY",
+        help="only append observations from these op categories; accepts spaces or commas",
+    )
     args = parser.parse_args()
-    run(args.out, args.repos_root)
+    try:
+        allowed_ops = _parse_allowed_ops(args.allowed_ops)
+    except ValueError as exc:
+        parser.error(str(exc))
+    run(args.out, args.repos_root, allowed_ops)
 
 
 if __name__ == "__main__":

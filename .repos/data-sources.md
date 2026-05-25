@@ -173,6 +173,15 @@ Tier 1 = best pair quality, broadest category coverage. Tier 2 = filler for unde
 - **Why:** LLM serving kernels (paged-KV attention, INT8 GEMM, fused norm + activation). Production patterns alternative to vLLM.
 - **Examples extracted:** _populated by extraction tool_
 
+### stackav-oss/conch — Tier 2
+
+- **URL:** https://github.com/stackav-oss/conch
+- **License:** Apache 2.0
+- **Pinned commit:** `e2c5ecfe341574114fef0218dedb1dd0da1e71f2` (2025-10-02)
+- **Categories targeted:** `embedding`, `normalization`, `activation`, `quantization`, `fused_attention`, `other`
+- **Why:** A compact Triton kernel library with explicit PyTorch-only reference implementations, including a rotary embedding kernel/reference pair useful for under-quota embedding coverage.
+- **Examples extracted:** _populated by extraction tool_
+
 ## What is NOT used
 
 - Triton kernel sources from these repos are never indexed into RAG and never appear in any agent-loop prompt.

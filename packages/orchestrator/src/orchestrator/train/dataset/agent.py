@@ -3,12 +3,13 @@ Agent loop for the TRIED orchestrator.
 
 Public API
 ----------
-run_job(record, client, data_dir) -> None
+run_job(record, client, data_dir) -> DatasetOutcome
     Runs the generate → compile → run retry loop for one corpus record and
     writes the result to dataset.jsonl. Failed attempts call the judge for
     taxonomy labels and retry advice; passing attempts skip it. All records
     loaded by main.py have already passed the eager-vs-Inductor preflight check
     (see preflight_driver). Transport exceptions propagate to the caller.
+    Returns the final outcome so the caller can keep aggregate counts.
 """
 from __future__ import annotations
 
@@ -58,7 +59,7 @@ def run_job(
     record: CorpusRecord,
     client: VerificationClient,
     data_dir: Path,
-) -> None:
+) -> DatasetOutcome:
     """Run the agent loop for one corpus record and write to dataset.jsonl.
 
     All records reaching this function have already passed the eager-vs-Inductor
@@ -77,23 +78,12 @@ def run_job(
         rng_seed=record.rng_seed,
         tolerance_policy=policy,
     )
-    _log.info(
-        "job start  dataset_id=%s  source_id=%s  policy=%s",
-        dataset_id,
-        record.example_id,
-        policy.value,
-    )
-
     # --- Retry loop ---
     attempts: list[Attempt] = []
     prior_code: str | None = None
     prior_advice: str | None = None
 
     for attempt_n in range(MAX_ATTEMPTS):
-        _log.info(
-            "attempt %d/%d  dataset_id=%s  source_id=%s",
-            attempt_n, MAX_ATTEMPTS - 1, dataset_id, record.example_id,
-        )
         timestamp = datetime.now(timezone.utc)
 
         gen = generate(
@@ -153,17 +143,6 @@ def run_job(
             break
 
         assert judge_result is not None
-        _log.info(
-            "attempt %d  classification=%s  root_cause=%s  repair_action=%s  "
-            "dataset_id=%s",
-            attempt_n,
-            judge_result.classification.value,
-            judge_result.root_cause.value if judge_result.root_cause else None,
-            judge_result.repair_action.value if judge_result.repair_action else None,
-            dataset_id,
-        )
-        if judge_result.fix_suggestion is not None:
-            _log.info("judge advice: %s", judge_result.fix_suggestion)
 
         if final_attempt:
             break
@@ -172,10 +151,6 @@ def run_job(
         prior_advice = judge_result.fix_suggestion
 
     final_outcome = _compute_outcome(attempts)
-    _log.info(
-        "job done  dataset_id=%s  source_id=%s  attempts=%d  outcome=%s",
-        dataset_id, record.example_id, len(attempts), final_outcome.value,
-    )
 
     append_dataset_row(dataset_path, DatasetRow(
         dataset_id=dataset_id,
@@ -193,6 +168,8 @@ def run_job(
         attempts=attempts,
         final_outcome=final_outcome,
     ))
+
+    return final_outcome
 
 
 # ---------------------------------------------------------------------------

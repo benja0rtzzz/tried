@@ -10,7 +10,13 @@ dist/
 build/
 
 # Data
-data/
+# data/
+
+# Reference repo checkouts are local extraction inputs; keep only manifests/docs.
+.repos/*
+!.repos/COMMITS.txt
+!.repos/clone.sh
+!.repos/data-sources.md
 
 # Environment / secrets
 .env

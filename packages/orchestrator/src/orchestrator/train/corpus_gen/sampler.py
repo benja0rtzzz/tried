@@ -71,6 +71,30 @@ STOCK_SHAPES: dict[ShapeRank, list[list[int]]] = {
 }
 
 
+def _parse_allowed_ops(raw_values: list[str] | None) -> set[OpCategory] | None:
+    if raw_values is None:
+        return None
+
+    values = [
+        value.strip()
+        for raw in raw_values
+        for value in raw.split(",")
+        if value.strip()
+    ]
+    valid = {category.value for category in OpCategory}
+    invalid = [value for value in values if value not in valid]
+    if invalid:
+        raise ValueError(
+            "invalid op categories: "
+            + ", ".join(invalid)
+            + "; valid values: "
+            + ", ".join(sorted(valid))
+        )
+    if not values:
+        raise ValueError("--allowed-ops was provided but no categories were listed")
+    return {OpCategory(value) for value in values}
+
+
 def _load_observations(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         logger.warning("observations file missing: %s", path)
@@ -90,12 +114,48 @@ def _load_observations(path: Path) -> list[dict[str, str]]:
     return out
 
 
-def _scale_quotas(target_total: int) -> dict[OpCategory, int]:
+def _load_existing_spec_ids(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+
+    seen: set[str] = set()
+    with path.open() as f:
+        for raw in f:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            spec_id = row.get("spec_id")
+            if isinstance(spec_id, str):
+                seen.add(spec_id)
+    return seen
+
+
+def _default_n(allowed_ops: set[OpCategory] | None) -> int:
+    if allowed_ops is None:
+        return sum(QUOTAS.values())
+    return sum(QUOTAS[category] for category in QUOTAS if category in allowed_ops)
+
+
+def _scale_quotas(
+    target_total: int,
+    allowed_ops: set[OpCategory] | None = None,
+) -> dict[OpCategory, int]:
+    active_categories = [category for category in QUOTAS if allowed_ops is None or category in allowed_ops]
+    scaled = {category: 0 for category in QUOTAS}
     if target_total <= 0:
-        return {category: 0 for category in QUOTAS}
-    base_total = sum(QUOTAS.values())
-    raw = {c: QUOTAS[c] * target_total / base_total for c in QUOTAS}
-    scaled = {c: int(raw[c]) for c in raw}
+        return scaled
+    if not active_categories:
+        return scaled
+
+    base_total = sum(QUOTAS[category] for category in active_categories)
+    raw = {c: QUOTAS[c] * target_total / base_total for c in active_categories}
+    scaled.update({c: int(raw[c]) for c in raw})
     remaining = target_total - sum(scaled.values())
     if remaining > 0:
         by_fraction = sorted(raw, key=lambda c: raw[c] - int(raw[c]), reverse=True)
@@ -226,13 +286,19 @@ def _seed_from_spec_id(spec_id: str) -> int:
     return uuid.UUID(spec_id).int % (2**31 - 1)
 
 
-def sample_specs(n: int, seed: int, observations_path: Path) -> list[SkeletonSpec]:
+def sample_specs(
+    n: int,
+    seed: int,
+    observations_path: Path,
+    allowed_ops: set[OpCategory] | None = None,
+    exclude_spec_ids: set[str] | None = None,
+) -> list[SkeletonSpec]:
     rng = random.Random(seed)
     distributions = _build_distributions(_load_observations(observations_path))
-    quotas = _scale_quotas(n)
+    quotas = _scale_quotas(n, allowed_ops)
 
     specs: list[SkeletonSpec] = []
-    seen: set[str] = set()
+    seen: set[str] = set(exclude_spec_ids or ())
     for category, quota in quotas.items():
         created = 0
         attempts = 0
@@ -289,24 +355,73 @@ def sample_specs(n: int, seed: int, observations_path: Path) -> list[SkeletonSpe
     return specs
 
 
-def write_specs(specs: list[SkeletonSpec], out_path: Path) -> None:
+def write_specs(specs: list[SkeletonSpec], out_path: Path, append: bool = True) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w") as f:
+    existing = _load_existing_spec_ids(out_path) if append else set()
+    written = 0
+    with out_path.open("a" if append else "w") as f:
         for spec in specs:
+            if spec.spec_id in existing:
+                continue
             f.write(spec.model_dump_json() + "\n")
+            existing.add(spec.spec_id)
+            written += 1
+    return written
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="orchestrator.train.corpus_gen.sampler")
     parser.add_argument("--observations", type=Path, default=DEFAULT_OBS)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
-    parser.add_argument("--n", type=int, default=sum(QUOTAS.values()))
+    parser.add_argument(
+        "--n",
+        type=int,
+        default=None,
+        help="total specs to sample; defaults to the base quota total for selected categories",
+    )
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument(
+        "--allowed-ops",
+        nargs="+",
+        default=None,
+        metavar="OP_CATEGORY",
+        help="only sample specs from these op categories; accepts spaces or commas",
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--append",
+        dest="append",
+        action="store_true",
+        default=True,
+        help="append only new spec_id rows to --out (default)",
+    )
+    mode.add_argument(
+        "--overwrite",
+        dest="append",
+        action="store_false",
+        help="replace --out instead of appending",
+    )
     args = parser.parse_args()
 
-    specs = sample_specs(n=args.n, seed=args.seed, observations_path=args.observations)
-    write_specs(specs, args.out)
-    logger.info("wrote %d specs to %s", len(specs), args.out)
+    try:
+        allowed_ops = _parse_allowed_ops(args.allowed_ops)
+    except ValueError as exc:
+        parser.error(str(exc))
+    n = args.n if args.n is not None else _default_n(allowed_ops)
+    exclude_spec_ids = _load_existing_spec_ids(args.out) if args.append else set()
+    if exclude_spec_ids:
+        logger.info("append mode: excluding %d existing spec_id(s) from %s", len(exclude_spec_ids), args.out)
+
+    specs = sample_specs(
+        n=n,
+        seed=args.seed,
+        observations_path=args.observations,
+        allowed_ops=allowed_ops,
+        exclude_spec_ids=exclude_spec_ids,
+    )
+    written = write_specs(specs, args.out, append=args.append)
+    action = "appended" if args.append else "wrote"
+    logger.info("%s %d specs to %s", action, written, args.out)
 
 
 if __name__ == "__main__":

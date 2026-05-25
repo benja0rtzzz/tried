@@ -204,9 +204,8 @@ def _run_sequential(specs: list[SkeletonSpec], dedup: EvalDedup, out_path: Path,
 
         if result[0] == "rejected":
             row = result[1]
-            logger.info("reject [%d/%d] %s reason=%s message=%s", i, len(specs), spec.spec_id[:8], row.reason, row.message)
-        if i % 25 == 0:
-            logger.info("progress: %d/%d accepted=%d rejected=%d", i, len(specs), accepted, rejected)
+            logger.info("reject [%d/%d] %s reason=%s", i, len(specs), spec.spec_id[:8], row.reason)
+        logger.info("progress: %d/%d accepted=%d rejected=%d", i, len(specs), accepted, rejected)
         if hit_rate:
             logger.error("codex rate limit encountered after %d rows", i - 1)
             logger.info("partial progress: accepted=%d rejected=%d", accepted, rejected)
@@ -250,9 +249,8 @@ def _run_parallel(specs: list[SkeletonSpec], dedup: EvalDedup, out_path: Path, r
 
             if result[0] == "rejected":
                 row = result[1]
-                logger.info("reject [%d/%d] %s reason=%s message=%s", completed, len(specs), spec.spec_id[:8], row.reason, row.message)
-            if completed % 25 == 0:
-                logger.info("progress: %d/%d accepted=%d rejected=%d", completed, len(specs), accepted, rejected)
+                logger.info("reject [%d/%d] %s reason=%s", completed, len(specs), spec.spec_id[:8], row.reason)
+            logger.info("progress: %d/%d accepted=%d rejected=%d", completed, len(specs), accepted, rejected)
             if hit_rate:
                 logger.error("codex rate limit encountered after %d rows", completed - 1)
                 logger.info("partial progress: accepted=%d rejected=%d", accepted, rejected)

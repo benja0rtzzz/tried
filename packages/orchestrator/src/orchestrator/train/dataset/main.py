@@ -3,6 +3,7 @@ Entry point for the TRIED orchestrator dataset-generation pipeline.
 
 Usage (from the project root):
     TRIED_ROLE=orchestrator uv run python -m orchestrator.train.dataset.main
+    TRIED_ROLE=orchestrator uv run python -m orchestrator.train.dataset.main --allowed-ops embedding
 
 Required env vars: see packages/orchestrator/.env
 Optional env vars:
@@ -17,7 +18,8 @@ Optional env vars:
                              dataset.jsonl count toward this cap.
 
 Run targeting: edit the ALLOWED_OPS constant below to restrict which op
-categories a run loads (None = all).
+categories a run loads (None = all), or pass --allowed-ops to override it
+for a run.
 
 Corpus/resume behaviour: the corpus is deduped to one row per source
 example_id — shape/dtype/seed variants of the same source never enter. On
@@ -32,6 +34,7 @@ the process once the rate-limit window clears.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -41,7 +44,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 from shared.dataset import load_dataset_index
-from shared.enums import OpCategory
+from shared.enums import DatasetOutcome, OpCategory
 from shared.logging import get_logger
 from shared.models import CorpusRecord, PreflightSafeRecord
 
@@ -64,7 +67,7 @@ _REQUIRED_ENV = [
 # aborts the run rather than silently loading nothing). Set it to None to
 # load every category.
 #
-#   ALLOWED_OPS = ["normalization", "reduction", "other", "activation"]
+#   ALLOWED_OPS = ["embedding"]
 #   ALLOWED_OPS = None   # load all categories
 #
 # The corpus is deduped to one row per source example_id (variants — same
@@ -72,17 +75,26 @@ _REQUIRED_ENV = [
 # capped at TRIED_MAX_PER_CATEGORY total unique example_ids; rows already in
 # dataset.jsonl count toward that cap, so a night fills the lagging
 # categories rather than re-saturating the full ones.
-ALLOWED_OPS: list[str] | None = None
+ALLOWED_OPS: list[str] | None = ["embedding"]
 
 _DEFAULT_MAX_PER_CATEGORY = 250
 
 
-def _validated_allowed_ops() -> set[str] | None:
+def _split_allowed_ops(raw_values: list[str]) -> list[str]:
+    return [
+        value.strip()
+        for raw in raw_values
+        for value in raw.split(",")
+        if value.strip()
+    ]
+
+
+def _validated_allowed_ops(configured: list[str] | None) -> set[str] | None:
     """Resolve ALLOWED_OPS to a set of valid OpCategory values, or None."""
-    if ALLOWED_OPS is None:
+    if configured is None:
         return None
     valid = {c.value for c in OpCategory}
-    invalid = [c for c in ALLOWED_OPS if c not in valid]
+    invalid = [c for c in configured if c not in valid]
     if invalid:
         _log.error(
             "ALLOWED_OPS contains invalid op categories: %s — valid values: %s",
@@ -90,10 +102,10 @@ def _validated_allowed_ops() -> set[str] | None:
             ", ".join(sorted(valid)),
         )
         sys.exit(1)
-    if not ALLOWED_OPS:
+    if not configured:
         _log.error("ALLOWED_OPS is an empty list — set it to None to load all categories")
         sys.exit(1)
-    return set(ALLOWED_OPS)
+    return set(configured)
 
 
 def _append_error(
@@ -194,16 +206,20 @@ def _load_corpus(corpus_path: Path, errors_path: Path) -> list[CorpusRecord]:
             invalid_rows,
             errors_path,
         )
-    if variant_rows:
-        _log.info(
-            "corpus dedup: %d source variant row(s) collapsed; %d unique source(s) loaded",
-            variant_rows,
-            len(records),
-        )
     return records
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(prog="orchestrator.train.dataset.main")
+    parser.add_argument(
+        "--allowed-ops",
+        nargs="+",
+        default=None,
+        metavar="OP_CATEGORY",
+        help="only train rows from these op categories; accepts spaces or commas",
+    )
+    args = parser.parse_args()
+
     from dotenv import load_dotenv
     load_dotenv()
     missing = [k for k in _REQUIRED_ENV if not os.getenv(k)]
@@ -230,44 +246,28 @@ def main() -> None:
         )
         sys.exit(1)
 
-    _log.info("loading corpus from %s", corpus_path)
-    _log.info("dataset output: %s", dataset_path)
-    _log.info("error output:   %s", errors_path)
     records = _load_corpus(corpus_path, errors_path)
-    _log.info("%d preflight-safe train record(s) loaded", len(records))
 
     # --- Resume filter (skip any source example_id already in the dataset) ---
     dataset_index = load_dataset_index(dataset_path)
     already_done = dataset_index.completed_example_ids
-    if dataset_index.row_count:
-        _log.info(
-            "resuming: %d dataset row(s) for %d unique source example_id(s) already collected — skipping those sources",
-            dataset_index.row_count,
-            len(already_done),
-        )
     if dataset_index.duplicate_row_count:
         _log.warning(
             "dataset output contains %d duplicate completed row(s) across %d dataset_id(s)",
             dataset_index.duplicate_row_count,
             len(dataset_index.duplicate_id_counts),
         )
-    before = len(records)
     records = [r for r in records if r.example_id not in already_done]
-    _log.info("resume filter: %d already-collected source(s) skipped", before - len(records))
 
     # --- ALLOWED_OPS category filter ---
-    allowed = _validated_allowed_ops()
+    configured_allowed_ops = (
+        _split_allowed_ops(args.allowed_ops)
+        if args.allowed_ops is not None
+        else ALLOWED_OPS
+    )
+    allowed = _validated_allowed_ops(configured_allowed_ops)
     if allowed is not None:
-        before = len(records)
         records = [r for r in records if r.op_category.value in allowed]
-        _log.info(
-            "ALLOWED_OPS=%s: %d record(s) outside the allowed categories skipped, %d remain",
-            sorted(allowed),
-            before - len(records),
-            len(records),
-        )
-    else:
-        _log.info("ALLOWED_OPS=None: loading every category")
 
     # --- Per-category cap (total unique example_ids; already-collected count toward it) ---
     try:
@@ -302,33 +302,18 @@ def main() -> None:
         capped.append(r)
     records = capped
 
-    _log.info(
-        "per-category cap = %d total unique example_id(s); this run adds: %s",
-        cap,
-        {c: added_per_cat[c] for c in sorted(added_per_cat)} or "nothing",
-    )
-    if cap_skipped:
-        _log.info(
-            "cap reached — fresh sources left unprocessed (raise cap or run later): %s",
-            {c: cap_skipped[c] for c in sorted(cap_skipped)},
-        )
-    _log.info("%d record(s) remaining after dedup + resume + ALLOWED_OPS + cap", len(records))
+    _log.info("ready: %d record(s) to process (corpus=%s, cap=%d)", len(records), corpus_path, cap)
 
     client = make_client()
 
     completed = 0
     transport_errors = 0
+    passed = 0
+    failed = 0
 
     for i, record in enumerate(records):
-        _log.info(
-            "--- record %d/%d  dataset_id=%s  source_id=%s ---",
-            i + 1,
-            len(records),
-            record.dataset_id,
-            record.example_id,
-        )
         try:
-            run_job(record, client, output_dir)
+            outcome = run_job(record, client, output_dir)
         except RateLimitError as exc:
             _log.error("Codex CLI rate limit hit: %s", exc)
             _log.error(
@@ -372,6 +357,14 @@ def main() -> None:
             continue
 
         completed += 1
+        if outcome == DatasetOutcome.COMPILED_CORRECT:
+            passed += 1
+        else:
+            failed += 1
+        _log.info(
+            "progress: %d/%d passed=%d failed=%d outcome=%s",
+            i + 1, len(records), passed, failed, outcome.value,
+        )
 
     # --- Summary ---
     _log.info("=== run complete ===")
