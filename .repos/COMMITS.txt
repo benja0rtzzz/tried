@@ -16,3 +16,4 @@ vllm	f80aa53c9dc2273a19a6855092069db7e1306fff	2026-05-09T17:46:52-04:00	2	https:
 xformers	ca6d2aa0d43241fc8a8dcd872debc2406160160d	2026-04-21T15:56:12Z	2	https://github.com/facebookresearch/xformers.git
 scattermoe	47b5e1502e5a10e82c8e5945d761b877849871e7	2025-10-03T01:51:21Z	2	https://github.com/shawntan/scattermoe.git
 flashnn	528a9301587f5fb135b25d973a87ba0a40a703a7	2024-09-09T16:22:40+08:00	2	https://github.com/AlibabaPAI/FLASHNN.git
+conch	e2c5ecfe341574114fef0218dedb1dd0da1e71f2	2025-10-02T12:52:39-04:00	2	https://github.com/stackav-oss/conch.git

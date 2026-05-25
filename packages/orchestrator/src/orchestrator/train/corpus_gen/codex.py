@@ -71,9 +71,26 @@ def _build_prompt(spec: SkeletonSpec) -> str:
     return f"<system>\n{system}\n</system>\n\n<user>\n{user}\n</user>"
 
 
-def _is_rate_limit(stderr: str) -> bool:
-    lowered = stderr.lower()
+def _is_rate_limit(text: str) -> bool:
+    lowered = text.lower()
     return any(hint in lowered for hint in _RATE_LIMIT_HINTS)
+
+
+def _tail(label: str, text: str, limit: int = 1200) -> str:
+    text = text.strip()
+    if not text:
+        return ""
+    return f"{label}={text[-limit:]}"
+
+
+def _failure_details(proc: subprocess.CompletedProcess[str], last_message_path: Path) -> str:
+    last_message = last_message_path.read_text() if last_message_path.exists() else ""
+    parts = [
+        _tail("stderr", proc.stderr),
+        _tail("stdout", proc.stdout),
+        _tail("last_message", last_message),
+    ]
+    return " | ".join(part for part in parts if part) or "no stderr/stdout/last_message captured"
 
 
 def synthesize(spec: SkeletonSpec) -> SkeletonResponse:
@@ -115,12 +132,10 @@ def synthesize(spec: SkeletonSpec) -> SkeletonResponse:
             raise CodexCallError(f"failed to execute codex CLI: {exc}") from exc
 
         if proc.returncode != 0:
-            stderr_tail = proc.stderr[-400:]
-            if _is_rate_limit(proc.stderr):
-                raise RateLimitError(f"codex CLI rate limit: {stderr_tail}")
-            raise CodexCallError(
-                f"codex exec exited {proc.returncode}: {stderr_tail}"
-            )
+            details = _failure_details(proc, last_message_path)
+            if _is_rate_limit("\n".join([proc.stderr, proc.stdout, details])):
+                raise RateLimitError(f"codex CLI rate limit: {details}")
+            raise CodexCallError(f"codex exec exited {proc.returncode}: {details}")
 
         raw = last_message_path.read_text() if last_message_path.exists() else ""
 

@@ -34,6 +34,7 @@ REPOS=(
   "xformers|https://github.com/facebookresearch/xformers.git|2"
   "scattermoe|https://github.com/shawntan/scattermoe.git|2"
   "flashnn|https://github.com/AlibabaPAI/FLASHNN.git|2"
+  "conch|https://github.com/stackav-oss/conch.git|2"
 )
 
 mode="${1:-clone}"
