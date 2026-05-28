@@ -9,7 +9,7 @@ non-passing attempt, emit one same-row preference pair:
      "rejected": <earliest non-passing triton_code>}
 
 Failure-mode mix of the rejected side is kept as-is — see
-docs/finetuning.md for the empirical 86/13/1 runtime/numeric/compile
+docs/finetuning.md for the empirical 85/15/0 runtime/numeric/compile
 breakdown and the rationale.
 """
 from __future__ import annotations

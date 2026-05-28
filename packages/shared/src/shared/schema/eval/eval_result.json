@@ -2,12 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tried.local/schemas/eval-record.json",
   "title": "TRIED Eval Record",
-  "description": "Per-example result of one eval run on one accepted eval-set row. Eval-specific bookkeeping: run_id identifies the run, embedded EvalSpec makes the row self-contained for analysis, and each attempt's benchmark block carries the full 100-iter timing arrays needed for non-parametric paired tests (Wilcoxon signed-rank, bootstrap CIs) and IQR/quartile descriptive stats. The generator condition is identified by the parent directory `eval/results/<label>/`, not by an in-record field. The current eval runner measures raw generator capability: one attempt per row, no judge, no retry; final_outcome is derived from compile, correctness, and benchmark results.",
+  "description": "Per-example result of one eval run on one accepted eval-set row. Embedded EvalSpec makes the row self-contained for analysis, and each attempt's benchmark block carries the full 100-iter timing arrays needed for non-parametric paired tests (Wilcoxon signed-rank, bootstrap CIs) and IQR/quartile descriptive stats. The generator condition is identified by the parent directory `eval/results/<label>/`, not by an in-record field. The current eval runner measures raw generator capability: one attempt per row, no judge, no retry; final_outcome is derived from compile, correctness, and benchmark results.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "example_id",
-    "run_id",
     "spec",
     "attempts",
     "final_outcome",
@@ -18,11 +17,6 @@
       "type": "string",
       "format": "uuid",
       "description": "Matches EvalCorpusRecord.example_id. Joining key for paired McNemar / Wilcoxon tests across two label folders."
-    },
-    "run_id": {
-      "type": "string",
-      "format": "uuid",
-      "description": "UUID for this whole eval run. All EvalRecords produced in one orchestrator invocation share the same run_id."
     },
     "spec": {
       "$ref": "eval_spec.json",
@@ -39,17 +33,17 @@
       "enum": [
         "correctness_failed",
         "runtime_fail",
+        "compile_fail",
         "compiled_correct_slow",
         "compiled_correct_parity",
-        "compiled_correct_faster_than_inductor",
-        "all_attempts_failed"
+        "compiled_correct_faster_than_inductor"
       ],
-      "description": "Terminal state for the eval example. Eval uses a richer closed vocabulary than DatasetRow so analysis can distinguish slow/parity/faster compiled-correct outcomes."
+      "description": "Terminal state for the eval example. Eval uses a richer closed vocabulary than DatasetRow so analysis can distinguish slow/parity/faster compiled-correct outcomes. compile_fail = /compile rejected the candidate; runtime_fail = /run failed before producing correctness stats OR /benchmark failed after correctness passed."
     },
     "final_winning_attempt_n": {
       "type": ["integer", "null"],
       "minimum": 0,
-      "description": "The attempt_n whose result is recorded in final_outcome. Null iff final_outcome is in {correctness_failed, runtime_fail, all_attempts_failed}."
+      "description": "The attempt_n whose result is recorded in final_outcome. Null iff final_outcome is in {correctness_failed, runtime_fail, compile_fail}."
     }
   },
   "$defs": {

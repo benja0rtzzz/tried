@@ -5,7 +5,7 @@ the same `generate(...)` interface as the Ollama-backed client at
 
 Used for all three eval conditions (base 4-bit, SFT-only 4-bit, SFT+DPO
 4-bit). The checkpoint path is supplied by the caller; chat-template
-wrapping, temperature, and max_tokens come from `config/experiment.yaml`.
+wrapping, temperature, and max_tokens come from `config/config.yaml`.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from orchestrator.improvement.config import load_config
+from orchestrator.improvement.shared.config import load_config
 from orchestrator.prompts.generator import SYSTEM, build_user_prompt
 
 _config: dict[str, Any] | None = None

@@ -2,7 +2,7 @@
 
 This document is the contract for someone who pulls the repository and wants to reproduce the TRIED experiment from scratch. Read it end-to-end before running anything.
 
-The exact software/hardware environment is recorded in [`docs/specs.yaml`](specs.yaml). Update that file whenever any version changes.
+The exact software/hardware environment is recorded in [`config/specs.yaml`](specs.yaml). Update that file whenever any version changes.
 
 ## What "reproducible" means here
 
@@ -38,10 +38,10 @@ uv sync                       # uses uv.lock — full transitive pin
 On the **MacBook (orchestrator)**:
 
 ```bash
-brew install ollama codex     # versions in docs/specs.yaml
+brew install ollama codex     # versions in config/specs.yaml
 ollama pull qwen2.5-coder:14b
-ollama show  qwen2.5-coder:14b   # check the digest matches docs/specs.yaml.orchestrator.generator.model_weights_digest
-codex --version                  # check vs docs/specs.yaml.orchestrator.judge.cli_version
+ollama show  qwen2.5-coder:14b   # check the digest matches config/specs.yaml.orchestrator.generator.model_weights_digest
+codex --version                  # check vs config/specs.yaml.orchestrator.judge.cli_version
 codex auth login              # complete the Codex CLI login flow
 cp packages/orchestrator/.env.example packages/orchestrator/.env
 # fill in VERIFICATION_SERVER_URL and VERIFICATION_API_KEY
@@ -147,8 +147,8 @@ TRIED_ROLE=orchestrator uv run python -m orchestrator.train.dataset.preflight_dr
 
 ### Not reproducible (hosted services)
 
-- **Codex CLI profile `gpt-5-3-codex`.** Drives both `corpus_gen/codex.py` (skeleton synthesis) and `clients/judge_client.py` (judge classification + fix advice). The profile is a local Codex CLI config (declared in `~/.codex/config.toml`) that selects model `gpt-5.3-codex` via the `oca` provider with `model_reasoning_effort = "high"`; the full profile is recorded in `docs/specs.yaml`. The model itself is hosted, so its weights and serving stack can change without notice. Two runs from scratch will produce different `with_code.jsonl` and different `judge_fix_suggestion` strings. This is why point 1 recommends starting from the committed `data/corpus_gen/` artifacts.
-- **Codex CLI version.** Recorded in `docs/specs.yaml`; subsequent CLI releases can change argument handling or output framing.
+- **Codex CLI profile `gpt-5-3-codex`.** Drives both `corpus_gen/codex.py` (skeleton synthesis) and `clients/judge_client.py` (judge classification + fix advice). The profile is a local Codex CLI config (declared in `~/.codex/config.toml`) that selects model `gpt-5.3-codex` via the `oca` provider with `model_reasoning_effort = "high"`; the full profile is recorded in `config/specs.yaml`. The model itself is hosted, so its weights and serving stack can change without notice. Two runs from scratch will produce different `with_code.jsonl` and different `judge_fix_suggestion` strings. This is why point 1 recommends starting from the committed `data/corpus_gen/` artifacts.
+- **Codex CLI version.** Recorded in `config/specs.yaml`; subsequent CLI releases can change argument handling or output framing.
 
 ## What is recorded (and why) per stage
 
@@ -173,4 +173,4 @@ These are tracked here rather than silently in code so a teammate auditing repro
 
 ## Honesty disclaimer to include in the paper / report
 
-> Two stages of the dataset pipeline call a hosted reasoning model (OpenAI `gpt-5-3-codex` via Codex CLI). The corresponding artifacts are committed to the repository at the SHAs recorded in `docs/specs.yaml`, but a from-scratch regeneration of the synthetic skeletons or the judge advice will not match bit-for-bit. We claim qualitative reproducibility — comparable per-category outcome distributions and eval headline numbers on equivalent hardware — and not bitwise determinism.
+> Two stages of the dataset pipeline call a hosted reasoning model (OpenAI `gpt-5-3-codex` via Codex CLI). The corresponding artifacts are committed to the repository at the SHAs recorded in `config/specs.yaml`, but a from-scratch regeneration of the synthetic skeletons or the judge advice will not match bit-for-bit. We claim qualitative reproducibility — comparable per-category outcome distributions and eval headline numbers on equivalent hardware — and not bitwise determinism.

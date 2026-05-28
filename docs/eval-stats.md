@@ -30,7 +30,7 @@ These drove the additions in `schema/eval/eval_result.json` beyond what `dataset
 | Per-method timing IQR / quartiles / outlier flagging (Week 2) | `attempts[*].benchmark.{triton,eager,inductor}_samples_ms` | `DatasetRow` records median + std only. Quartiles, IQR, and 1.5×IQR outlier detection require the raw 100-iter samples. |
 | Bootstrap CI on median speedup (Week 2) | same `*_samples_ms` arrays | Bootstrap resamples from the per-iteration distribution. Median + std doesn't carry enough information. |
 | Paired Wilcoxon signed-rank on per-iter speedup (Week 3) | same `*_samples_ms` arrays | The non-parametric paired test wants per-pair raw values, not summary statistics. |
-| Joining two model conditions for paired tests (Week 3, planned) | parent folder `eval/results/<label>/` + `run_id` + `example_id` | The label is the directory each `EvalRecord` lives under (not an in-record field), `run_id` distinguishes re-runs, and `example_id` is the join key. |
+| Joining two model conditions for paired tests (Week 3, planned) | parent folder `eval/results/<label>/` + `example_id` | The label is the directory each `EvalRecord` lives under (not an in-record field) and `example_id` is the join key. One canonical run per label; re-running overwrites the directory. |
 | Per-row tier stratification (Weeks 2-4) | `spec.tier` (embedded) | `DatasetRow.source` doesn't carry difficulty. The locked synthetic-fusion eval is the only place tier exists. |
 
 ## Group B — analyses computable from fields already in `EvalRecord`

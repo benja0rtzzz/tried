@@ -5,6 +5,9 @@ requires-python = ">=3.11"
 dependencies = [
     "tried-shared",
     "tabulate>=0.9",
+    "scipy>=1.13",
+    "scikit-posthocs>=0.9",
+    "statsmodels>=0.14",
 ]
 
 [tool.uv.sources]

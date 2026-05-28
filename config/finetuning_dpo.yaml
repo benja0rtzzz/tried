@@ -1,0 +1,53 @@
+# Technical DPO config consumed directly by mlx-lm-lora:
+#   mlx_lm_lora.train -c config/finetuning_dpo.yaml --train
+#
+# Values here MUST mirror config/config.yaml :: training.dpo (and inference.seed).
+# orchestrator.improvement.preflight aborts the run at startup if any value
+# diverges. If you change a hyperparameter, change BOTH files.
+#
+# The `model` here points at the SFT-merged 4-bit staging dir, not the original
+# base — DPO starts from the SFT policy (also used as the frozen reference).
+# Like the SFT base, the SFT-merged dir is already quantized on disk, so
+# load_in_4bits stays false (setting it true would raise "Cannot quantize
+# already quantized model").
+#
+# Locked at the start of the experiment. Changes require a decision-log entry.
+
+# --- model / data / mode ---
+model:                  "~/models/qwen-coder-14b-instruct-4bit-tried-sft/"
+load_in_4bits:          false                                        # SFT-merged base is already 4-bit on disk; load as-is
+train:                  true
+train_type:             lora
+train_mode:             dpo
+data:                   "data/improvement/dpo/"                      # dir with train.jsonl + valid.jsonl
+adapter_path:           "data/improvement/checkpoints/sft-dpo-adapters/"
+reference_model_path:   "~/models/qwen-coder-14b-instruct-4bit-tried-sft/"
+
+# --- core hyperparams (mirror config.yaml :: training.dpo) ---
+seed:                          20260522                              # mirrors config.yaml :: inference.seed
+learning_rate:                 5.0e-7
+epochs:                        1                                     # widen to 2 only if val signal supports it
+batch_size:                    1
+gradient_accumulation_steps:   8                                     # effective batch = 8
+max_seq_length:                4096                                  # empirical max is 2506; 4096 covers all 1256 sides with headroom
+beta:                          0.1                                   # DPO KL strength
+dpo_cpo_loss_type:             sigmoid                               # standard DPO loss
+num_layers:                    -1
+grad_checkpoint:               true
+
+lora_parameters:
+  rank:    64
+  dropout: 0.1
+  scale:   2.0
+
+# --- LR schedule: linear decay with 10% warmup ---
+# With ~595 same-row pairs (val-excluded), batch_size=1, gradient_accumulation_steps=8,
+# epochs=1 → total optimizer steps ≈ ceil(595 / 8) = 75. Warmup ≈ 10% = 8.
+# Recompute if the DPO-pair count or batching changes meaningfully.
+lr_schedule:
+  name:      linear_schedule
+  warmup:    8
+  arguments: [5.0e-7, 0.0, 75]                                       # [init_lr, end_lr, num_steps]
+
+# --- post-training ---
+fuse: false
