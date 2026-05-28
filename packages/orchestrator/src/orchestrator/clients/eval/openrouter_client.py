@@ -2,12 +2,12 @@
 OpenRouter client for the generator (reference baseline eval conditions).
 
 Uses the standard openai SDK pointed at OpenRouter's OpenAI-compatible API.
-All connection params come from config/experiment.yaml (openrouter:); the API
+All connection params come from config/config.yaml (openrouter:); the API
 key is read from OPENROUTER_API_KEY, which must be set in the orchestrator
 .env before running any eval condition that uses this client.
 
 Set TRIED_OPENROUTER_MODEL to a key under openrouter.models in
-experiment.yaml (e.g. "llama" or "deepseek") to select which model runs.
+config.yaml (e.g. "llama" or "deepseek") to select which model runs.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from orchestrator.improvement.config import load_config
+from orchestrator.improvement.shared.config import load_config
 from orchestrator.prompts.generator import SYSTEM, build_user_prompt
 
 _client: OpenAI | None = None
@@ -43,7 +43,7 @@ def generate(
     """Generate a Triton candidate via OpenRouter. Mirrors mlx_generator_client.generate.
 
     Reads TRIED_OPENROUTER_MODEL from the environment to select the model key
-    (must match a key under openrouter.models in experiment.yaml). The OpenAI
+    (must match a key under openrouter.models in config.yaml). The OpenAI
     client is initialised lazily and reused across calls.
     """
     _ensure_client()
@@ -53,14 +53,14 @@ def generate(
     if not model_key:
         raise RuntimeError(
             "TRIED_OPENROUTER_MODEL must be set to a model key defined in "
-            "config/experiment.yaml openrouter.models (e.g. 'llama' or 'deepseek')"
+            "config/config.yaml openrouter.models (e.g. 'llama' or 'deepseek')"
         )
     try:
         model_id = cfg["models"][model_key]["model_id"]
     except KeyError:
         raise RuntimeError(
             f"TRIED_OPENROUTER_MODEL={model_key!r} not found under "
-            "openrouter.models in config/experiment.yaml"
+            "openrouter.models in config/config.yaml"
         )
 
     user_msg = build_user_prompt(

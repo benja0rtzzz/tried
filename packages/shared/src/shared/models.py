@@ -551,7 +551,6 @@ class EvalRecord(BaseModel):
     Written to eval/results/<model_label>/eval_rows.jsonl. The model_label
     is the parent directory; it is not stored in the record itself."""
     example_id:              str
-    run_id:                  str
     spec:                    EvalSpec
     attempts:                list[EvalAttempt] = Field(min_length=1)
     final_outcome:           EvalFinalOutcome
@@ -571,7 +570,7 @@ class EvalRecord(BaseModel):
         terminal_without_winner = {
             EvalFinalOutcome.CORRECTNESS_FAILED,
             EvalFinalOutcome.RUNTIME_FAIL,
-            EvalFinalOutcome.ALL_ATTEMPTS_FAILED,
+            EvalFinalOutcome.COMPILE_FAIL,
         }
         if self.final_outcome in terminal_without_winner:
             if self.final_winning_attempt_n is not None:

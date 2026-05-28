@@ -1,0 +1,46 @@
+# Technical SFT config consumed directly by mlx-lm-lora:
+#   mlx_lm_lora.train -c config/finetuning_sft.yaml --train
+#
+# Values here MUST mirror config/config.yaml :: training.sft (and inference.seed).
+# orchestrator.improvement.preflight aborts the run at startup if any value
+# diverges. If you change a hyperparameter, change BOTH files.
+#
+# Locked at the start of the experiment. Changes require a decision-log entry.
+
+# --- model / data / mode ---
+model:                "~/models/qwen-coder-14b-instruct-4bit"
+load_in_4bits:        false                                         # base is already 4-bit on disk; mlx-lm-lora preserves the existing quantization. Setting true here triggers a re-quantize and raises "Cannot quantize already quantized model".
+train:                true
+train_type:           lora
+train_mode:           sft
+data:                 "data/improvement/sft/"                       # dir with train.jsonl + valid.jsonl
+adapter_path:         "data/improvement/checkpoints/sft-adapters/"
+
+# --- core hyperparams (mirror config.yaml :: training.sft) ---
+seed:                          20260522                              # mirrors config.yaml :: inference.seed
+learning_rate:                 1.0e-4
+epochs:                        2
+batch_size:                    2
+gradient_accumulation_steps:   8                                     # effective batch = 16
+max_seq_length:                2048
+mask_prompt:                   true                                  # response-only loss masking
+num_layers:                    -1                                    # all transformer blocks get LoRA
+grad_checkpoint:               true
+
+lora_parameters:
+  rank:    64
+  dropout: 0.1
+  scale:   2.0                                                       # alpha/rank standard LoRA scaling
+
+# --- LR schedule: cosine decay with 5% warmup ---
+# warmup and decay_steps are in optimizer steps. With ~737 train rows,
+# batch_size=2, gradient_accumulation_steps=8, epochs=2 →
+# total optimizer steps ≈ ceil(737 / 2 / 8) * 2 = 94. Warmup ≈ 5% = 5.
+# Recompute if the SFT-positive count or batching changes meaningfully.
+lr_schedule:
+  name:      cosine_decay
+  warmup:    5
+  arguments: [1.0e-4, 94, 0.0]                                       # [init_lr, decay_steps, end_lr]
+
+# --- post-training ---
+fuse: false                                                          # we merge explicitly via orchestrator.improvement.merge

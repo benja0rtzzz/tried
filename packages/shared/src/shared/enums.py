@@ -75,10 +75,10 @@ class DatasetOutcome(str, Enum):
 class EvalFinalOutcome(str, Enum):
     CORRECTNESS_FAILED                    = "correctness_failed"
     RUNTIME_FAIL                          = "runtime_fail"
+    COMPILE_FAIL                          = "compile_fail"
     COMPILED_CORRECT_SLOW                 = "compiled_correct_slow"
     COMPILED_CORRECT_PARITY               = "compiled_correct_parity"
     COMPILED_CORRECT_FASTER_THAN_INDUCTOR = "compiled_correct_faster_than_inductor"
-    ALL_ATTEMPTS_FAILED                   = "all_attempts_failed"
 
 
 class FailureSymptom(str, Enum):

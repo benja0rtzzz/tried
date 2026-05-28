@@ -14,8 +14,6 @@ Required env vars:
     VERIFICATION_API_KEY
 
 Resume: on restart, example_ids already in eval_rows.jsonl are skipped.
-The run_id is read from the first existing row (so all rows in one
-output file share one run_id) or freshly generated if the file is empty.
 """
 from __future__ import annotations
 
@@ -23,7 +21,6 @@ import argparse
 import json
 import os
 import sys
-import uuid
 from pathlib import Path
 
 from shared.logging import get_logger
@@ -61,25 +58,19 @@ def _load_holdout(path: Path) -> list[EvalCorpusRecord]:
     return out
 
 
-def _read_existing(out_path: Path) -> tuple[set[str], str | None]:
-    """Read out_path (if it exists). Returns (already-processed example_ids,
-    existing run_id). run_id is the value found on the first row; if the
-    file is empty or missing, returns None and the caller generates a fresh
-    run_id."""
+def _read_existing(out_path: Path) -> set[str]:
+    """Read out_path (if it exists) and return the set of already-processed
+    example_ids for resume filtering."""
     if not out_path.exists():
-        return set(), None
+        return set()
     seen: set[str] = set()
-    run_id: str | None = None
     with out_path.open() as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-            row = json.loads(line)
-            seen.add(row["example_id"])
-            if run_id is None:
-                run_id = row.get("run_id")
-    return seen, run_id
+            seen.add(json.loads(line)["example_id"])
+    return seen
 
 
 def _append_record(out_path: Path, record_json: str) -> None:
@@ -118,15 +109,11 @@ def main() -> None:
     rows = _load_holdout(args.holdout)
     _log.info(f"loaded {len(rows)} eval rows from {args.holdout}")
 
-    seen, existing_run_id = _read_existing(out_path)
-    run_id = existing_run_id or str(uuid.uuid4())
+    seen = _read_existing(out_path)
     if seen:
         before = len(rows)
         rows = [r for r in rows if r.example_id not in seen]
         _log.info(f"resume: skipping {before - len(rows)} already-processed rows")
-        _log.info(f"continuing run_id={run_id}")
-    else:
-        _log.info(f"fresh run_id={run_id}")
 
     if args.limit is not None:
         rows = rows[:args.limit]
@@ -137,7 +124,7 @@ def main() -> None:
     try:
         for i, record in enumerate(rows):
             try:
-                eval_record = run_eval_job(record, client, args.model_label, run_id)
+                eval_record = run_eval_job(record, client, args.model_label)
             except Exception as e:
                 _log.error(
                     f"transport / unexpected error on {record.example_id[:8]}: "
@@ -154,7 +141,7 @@ def main() -> None:
             if (i + 1) % 5 == 0:
                 _log.info(f"progress: {i+1}/{len(rows)} done={n_done} skipped={n_skipped}")
     finally:
-        _log.info(f"shutdown: done={n_done} skipped={n_skipped} run_id={run_id}")
+        _log.info(f"shutdown: done={n_done} skipped={n_skipped}")
 
 
 if __name__ == "__main__":

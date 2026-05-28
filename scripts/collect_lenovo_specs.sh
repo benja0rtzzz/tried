@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Collect every value the `verification:` block of docs/specs.yaml expects.
+# Collect every value the `verification:` block of config/specs.yaml expects.
 #
 # Run from the repo root on the Lenovo (after `uv sync`):
 #   bash scripts/collect_lenovo_specs.sh
 #
 # The script prints a YAML-shaped block to stdout, followed by a
 # diagnostic log explaining any field that came back empty. Copy the
-# YAML block into docs/specs.yaml under `verification:`; use the log to
+# YAML block into config/specs.yaml under `verification:`; use the log to
 # fix anything that didn't populate.
 #
 # WSL2-aware: looks for nvidia-smi at /usr/lib/wsl/lib/nvidia-smi and
@@ -241,7 +241,7 @@ fi
 # --- Emit YAML -------------------------------------------------------------
 
 cat <<YAML
-# --- paste under \`verification:\` in docs/specs.yaml -----------------------
+# --- paste under \`verification:\` in config/specs.yaml -----------------------
 verification:
   hardware:
 $(emit machine        "$machine")

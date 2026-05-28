@@ -12,6 +12,7 @@ dependencies = [
 tried-orchestrator = { workspace = true }
 tried-shared = { workspace = true }
 tried-stats = { workspace = true }
+tried-tests = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -20,4 +21,5 @@ members = ["packages/*"]
 dev-dependencies = [
     "pytest>=8.0",
     "python-dotenv>=1.0",
+    "tried-tests",
 ]

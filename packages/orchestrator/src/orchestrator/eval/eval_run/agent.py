@@ -49,7 +49,6 @@ def run_eval_job(
     record: EvalCorpusRecord,
     client: VerificationClient,
     model_label: str,
-    run_id: str,
 ) -> EvalRecord | None:
     """Run one raw attempt on an EvalCorpusRecord. Returns the EvalRecord
     on completion, or None if /preflight didn't pass on this run.
@@ -144,7 +143,6 @@ def run_eval_job(
 
     return EvalRecord(
         example_id=record.example_id,
-        run_id=run_id,
         spec=spec,
         attempts=[attempt],
         final_outcome=final_outcome,
@@ -163,13 +161,13 @@ def _derive_outcome(
     attempt_n: int,
 ) -> tuple[EvalFinalOutcome, int | None]:
     if compile_resp.status == CompileStatus.FAILED:
-        return EvalFinalOutcome.ALL_ATTEMPTS_FAILED, None
+        return EvalFinalOutcome.COMPILE_FAIL, None
     if _run_error(run_resp) is not None:
         return EvalFinalOutcome.RUNTIME_FAIL, None
     if run_resp is None or run_resp.correctness_status != CorrectnessStatus.PASSED:
         return EvalFinalOutcome.CORRECTNESS_FAILED, None
     if benchmark_resp is None:
-        return EvalFinalOutcome.ALL_ATTEMPTS_FAILED, None
+        return EvalFinalOutcome.RUNTIME_FAIL, None
     speedup = benchmark_resp.speedup_vs_inductor or 0.0
     if speedup >= 1.1:
         return EvalFinalOutcome.COMPILED_CORRECT_FASTER_THAN_INDUCTOR, attempt_n

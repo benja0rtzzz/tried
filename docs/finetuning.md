@@ -23,8 +23,8 @@ The Ollama Q4 vanilla baseline (`eval/results/qwen2.5-coder:14b-vanilla/`) was d
 |---|---|---|
 | Base precision | 4-bit (frozen) | Frees memory for higher rank, longer sequences, larger batches on 48 GB unified RAM. |
 | Adapter rank | 64 | Capacity to learn Triton API patterns; rank-8 is too small for a new skill. |
-| Adapter alpha | 128 (2× rank) | Standard LoRA scaling. |
-| Adapter dropout | 0.1 | Conservative for ~570 SFT examples. Drop to 0.05 if/when SFT-positive pool reaches 1000. |
+| Adapter scale | 2.0 (= alpha/rank with alpha=128, rank=64) | Standard LoRA scaling. mlx-lm-lora's `lora_parameters.scale` is the alpha/rank ratio, not alpha itself. |
+| Adapter dropout | 0.1 | Conservative for ~776 SFT examples. Drop to 0.05 if/when SFT-positive pool reaches 1000. |
 | Gradient checkpointing | on | Trades ~25% compute for ~3–4× activation memory savings. |
 | Adapters trained in | bf16 | Apple Silicon native format; better numerical stability than fp16 at no memory cost. |
 
@@ -42,7 +42,7 @@ Both builders read `data/dataset/dataset.jsonl` and render the prompt with the *
 - **Prompt:** rendered with empty `prior_attempt_section` (the attempt-0 prompt), regardless of which attempt index actually won. This trains the model to get the answer right on the first try, which is the metric the locked holdout measures (one attempt per row, no retry).
 - **Response:** `attempts[i].triton_code` for the first `i` where the correctness check passed.
 - **Output:** JSONL with `{"messages": [system, user, assistant]}` (the `mlx_lm.lora` chat format). The tokenizer applies the chat template at load time.
-- **Expected count:** 570 today (empirically counted from `data/dataset/dataset.jsonl`), growing to ~700 as collection continues to ~2000 rows.
+- **Expected count:** 776 today (empirically counted from `data/dataset/dataset.jsonl`, 2500 rows / 6899 attempts).
 
 ### DPO data (`packages/orchestrator/src/orchestrator/improvement/data/dpo_builder.py`)
 
@@ -51,15 +51,15 @@ Both builders read `data/dataset/dataset.jsonl` and render the prompt with the *
 - **Chosen:** the winning Triton code (same as SFT).
 - **Rejected:** the first failing attempt's `triton_code`. If multiple failures exist, take the earliest (deterministic, easy to reason about). One rejected per chosen.
 - **Output:** JSONL with `{"prompt": <str>, "chosen": <str>, "rejected": <str>}`.
-- **Expected count:** 457 today (empirically counted).
+- **Expected count:** 628 today (empirically counted).
 
-**Rejected-attempt mix (kept as-is).** Across the 457 pairs, the earliest non-passing attempt is `runtime_fail` 86% (compiles but crashes at launch — the dominant Triton-API-error pattern), `numeric_fail` 13% (compiles and runs but fails tolerance), and `compile_fail` 1% (static validation fails). The mix is preserved without filtering: runtime failures are exactly the capability gap DPO is meant to address, and the rare compile-fail rejecteds are too few to dilute the signal.
+**Rejected-attempt mix (kept as-is).** Across the 628 pairs, the earliest non-passing attempt is `runtime_fail` 85% (compiles but crashes at launch — the dominant Triton-API-error pattern), `numeric_fail` 15% (compiles and runs but fails tolerance), and `compile_fail` 0% (none observed). The mix is preserved without filtering: runtime failures are exactly the capability gap DPO is meant to address.
 
-Cross-row pair mining from the 1160 pure-failure rows is deferred. The 457 same-row pairs are higher quality (same PyTorch task, same shapes, same dtype) and are enough to start.
+Cross-row pair mining from the 1724 pure-failure rows is deferred. The 628 same-row pairs are higher quality (same PyTorch task, same shapes, same dtype) and are enough to start.
 
 ## Training recipe: SFT then DPO
 
-The standard recipe. SFT teaches the model what correct Triton looks like; DPO refines preferences against same-row failures using the SFT checkpoint as the reference policy. DPO-only from the base model is known to be unstable when the base has a real capability gap (which Qwen does for Triton — see the 64.5% `triton_api_error` rate).
+The standard recipe. SFT teaches the model what correct Triton looks like; DPO refines preferences against same-row failures using the SFT checkpoint as the reference policy. DPO-only from the base model is known to be unstable when the base has a real capability gap (which Qwen does for Triton — see the 64.6% `triton_api_error` rate).
 
 ### SFT
 
@@ -72,7 +72,7 @@ Starting hyperparameters (to be tuned against training loss curves on a held-out
 | LR schedule | cosine, 5% warmup |
 | Epochs | 2 (watch val loss; add epoch 3 only if val loss still declining at epoch 2 end) |
 | Effective batch | 16 (micro-batch ≈ 2–4 with gradient accumulation) |
-| Max sequence length | 2048 (empirical max across 570 SFT-positive rows is 1218 tokens; 2048 gives ~1.7× headroom, zero truncations) |
+| Max sequence length | 2048 (empirical max across 776 SFT-positive rows is 1218 tokens, p99 1073; 2048 gives ~1.7× headroom, zero truncations) |
 | Loss masking | response-only (prompt tokens masked out of the loss) |
 | Validation split | 5% stratified by `op_category`, carved once and persisted to `data/improvement/val_split.json`; the SAME split is used for SFT and for DPO chosen/rejected filtering so the validation rows never leak into training |
 
@@ -88,7 +88,7 @@ Started from the SFT checkpoint as both policy and reference.
 | Epochs | 1–2 |
 | Effective batch | 8 |
 | Beta (KL strength) | 0.1 |
-| Max sequence length | 2048 (prompt + chosen, prompt + rejected) |
+| Max sequence length | 4096 (prompt + chosen, prompt + rejected; empirical max across 1256 sides is 2506 tokens, p99 993 — 2048 would clip 5 sides / ~0.8% of pairs, 4096 covers all observed rows at near-zero cost since `mlx_lm.lora` pads to the longest in batch, not to the ceiling) |
 
 After each stage: `mlx_lm.merge` produces a transient fp16 checkpoint, then `mlx_lm.convert -q --q-bits 4` re-quantizes it to 4-bit. Only the final 4-bit checkpoint is kept (`sft-merged-4bit/`, `sft-dpo-merged-4bit/`). The intermediate fp16 artifact can be discarded once conversion succeeds.
 
@@ -114,7 +114,7 @@ G. Compare with paired McNemar (pass rate) and paired Wilcoxon (log-speedup),
 
 The three eval result folders are joinable by `example_id` (the locked holdout's join key) — no schema changes needed. The SFT-only eval is what tells us whether DPO helped, hurt, or was a wash; without it, a positive base-vs-(SFT+DPO) result can't be attributed.
 
-A new generator client `packages/orchestrator/src/orchestrator/clients/mlx_generator_client.py` loads a local MLX checkpoint and exposes the same interface as `clients/generator_client.py` (Ollama). The eval runner selects which client to use via env var (e.g., `TRIED_GENERATOR_BACKEND={ollama,mlx}`) plus a checkpoint path. Generation parameters (`temperature=0`, `max_tokens=2048`, markdown-fence stripping) match the Ollama-vanilla config recorded in `docs/specs.yaml` exactly — the MLX client reads these from the shared control config so all eval conditions share one knob.
+A new generator client `packages/orchestrator/src/orchestrator/clients/mlx_generator_client.py` loads a local MLX checkpoint and exposes the same interface as `clients/generator_client.py` (Ollama). The eval runner selects which client to use via env var (e.g., `TRIED_GENERATOR_BACKEND={ollama,mlx}`) plus a checkpoint path. Generation parameters (`temperature=0`, `max_tokens=2048`, markdown-fence stripping) match the Ollama-vanilla config recorded in `config/specs.yaml` exactly — the MLX client reads these from the shared control config so all eval conditions share one knob.
 
 ### Pre-registered headline thresholds
 
@@ -158,35 +158,58 @@ eval/results/                     # three eval folders, joined by example_id
 └── qwen2.5-coder-14b-mlx-4bit-tried-ft/
 ```
 
-Shared experiment-config file at **`config/experiment.yaml`** is the single source of truth for the random seed, generation params (`temperature`, `max_tokens`), chat-template reference, and training hyperparameters. Layout:
+Config lives in three files under `config/`:
+
+- **`config/config.yaml`** — authoritative spec. Single source of truth for the random seed, generation params (`temperature`, `max_tokens`), chat-template reference, and training hyperparameters. Read by the orchestrator (eval clients + fine-tuning wrappers).
+- **`config/finetuning_sft.yaml`** — technical SFT config consumed directly by `mlx_lm_lora.train`. Uses mlx-lm-lora's exact key names (`learning_rate`, `max_seq_length`, `mask_prompt`, `gradient_accumulation_steps`, `lora_parameters.{rank,dropout,scale}`).
+- **`config/finetuning_dpo.yaml`** — same shape, DPO-specific values (plus `beta`, `dpo_cpo_loss_type`, `reference_model_path`).
+
+The two stage YAMLs MUST mirror the values in `config.yaml`. `orchestrator.improvement.preflight.preflight_check(stage)` is called by each trainer wrapper at startup and aborts the run on any mismatch (per-stage hyperparams, the experiment-wide seed, and the SFT `model` field against `training.base_model`). The stage YAMLs additionally carry mlx-lm-lora-specific keys that don't live in `config.yaml` and aren't preflight-enforced: `lr_schedule` (warmup + decay), `load_in_4bits: false` (uniform for both stages — every base we load is already 4-bit on disk, so we let mlx-lm-lora preserve the existing quantization; setting it true would raise "Cannot quantize already quantized model"), `grad_checkpoint`, `num_layers`, `fuse: false`, and `dpo_cpo_loss_type: sigmoid`.
+
+Shape of `config.yaml`:
 
 ```yaml
-inference:                  # read by both the Ollama and MLX generator clients, and by the eval runner
+schema_version: 1
+
+inference:                         # read by MLX client + OpenRouter client + eval runner
   temperature:    0
   max_tokens:     2048
-  chat_template:  "Qwen/Qwen2.5-Coder-14B-Instruct"   # tokenizer ID whose template is applied
-  seed:           20260522                            # one seed across the whole experiment
+  chat_template:  "Qwen/Qwen2.5-Coder-14B-Instruct"   # tokenizer ID whose apply_chat_template is used
+  seed:           20260522                             # one seed across the whole experiment
 
-training:                   # read only by the fine-tuning scripts
+openrouter:                        # reference-baseline conditions
+  base_url:       "https://openrouter.ai/api/v1"
+  temperature:    0
+  max_completion_tokens: 2048
+  seed:           20260522
+  models:
+    llama:    { model_id: "meta-llama/llama-3.3-70b-instruct" }
+    deepseek: { model_id: "deepseek/deepseek-v4-flash" }
+
+training:                          # mirrored into finetuning_{sft,dpo}.yaml
+  base_model:     "mlx-community/Qwen2.5-Coder-14B-4bit"   # SFT base; DPO uses the SFT-merged fp16 staging dir
   val_split_path: data/improvement/val_split.json
   val_fraction:   0.05
   stratify_by:    op_category
   sft:
-    lr: 1.0e-4
-    epochs: 2
-    effective_batch: 16
-    max_seq_len: 2048
-    loss_masking: response_only
-    lora: { rank: 64, alpha: 128, dropout: 0.1 }
+    learning_rate:               1.0e-4
+    epochs:                      2
+    batch_size:                  2
+    gradient_accumulation_steps: 8       # effective batch = 16
+    max_seq_length:              2048
+    mask_prompt:                 true    # response-only loss masking
+    lora: { rank: 64, dropout: 0.1, scale: 2.0 }   # scale = alpha/rank (alpha=128, rank=64)
   dpo:
-    lr: 5.0e-7
-    epochs: 1     # widen to 2 only if val signal supports it
-    effective_batch: 8
-    beta: 0.1
-    max_seq_len: 2048
+    learning_rate:               5.0e-7
+    epochs:                      1
+    batch_size:                  1
+    gradient_accumulation_steps: 8       # effective batch = 8
+    max_seq_length:              4096
+    beta:                        0.1
+    lora: { rank: 64, dropout: 0.1, scale: 2.0 }
 ```
 
-`config/experiment.yaml` is checked into git. The `inference` block is the only knob the existing eval runner needs to start reading from; the `training` block is read by the new fine-tuning scripts.
+All three files are checked into git. Changing any value requires updating both the authoritative file and the mirroring stage YAML; the preflight will refuse to start training otherwise.
 
 ## Decisions that need a `docs/decision-log.md` entry once implemented
 
@@ -194,13 +217,13 @@ training:                   # read only by the fine-tuning scripts
 - QLoRA rank 64, bf16 adapters, with the recipe above; SFT-then-DPO.
 - Post-merge re-quantization workflow: merge → fp16 (transient) → convert to 4-bit; only 4-bit checkpoint kept.
 - Attempt-0 SFT prompt rendering (winning code regardless of which attempt produced it).
-- Same-row DPO pair construction (attempt-0 prompt; chosen = winner; rejected = earliest failing attempt). Failure-mode mix kept as-is (86/13/1 runtime/numeric/compile).
+- Same-row DPO pair construction (attempt-0 prompt; chosen = winner; rejected = earliest failing attempt). Failure-mode mix kept as-is (85/15/0 runtime/numeric/compile).
 - **Three-eval comparison** (4-bit base, SFT-only, SFT+DPO; all via MLX), joined by `example_id` for paired tests.
 - **Chat-template parity**: training data and MLX inference both use `apply_chat_template` from `Qwen/Qwen2.5-Coder-14B-Instruct`; no hand-rolled wrapping.
 - **Response-only loss masking** for SFT.
-- **Max sequence length 2048** validated empirically against the 570 SFT-positive rows (max observed 1218 tokens, p99 1104).
+- **Max sequence length: SFT 2048, DPO 4096** validated empirically. SFT: 776 positives, max 1218 tokens, p99 1073. DPO: 1256 sides (628 pairs × 2), max 2506 tokens, p99 993 — 4096 covers all observed rows; 2048 would have clipped 5 sides / ~0.8% of pairs.
 - **Headline test thresholds pre-registered**: McNemar two-sided p<0.05 AND pass-rate lift ≥ +3pp; Wilcoxon on log-speedup with rank-biserial effect size and median+IQR reporting.
-- Shared experiment-config file at `config/experiment.yaml` is the single source of truth for seed, generation params, and training hyperparameters; both the eval runner and the fine-tuning scripts read from it.
+- Shared experiment-config file at `config/config.yaml` is the single source of truth for seed, generation params, and training hyperparameters. The mlx-lm-lora-specific per-stage configs live next to it as `config/finetuning_sft.yaml` and `config/finetuning_dpo.yaml` and must mirror the authoritative values; `orchestrator.improvement.preflight` enforces this at run start.
 
 ## Open decisions
 
